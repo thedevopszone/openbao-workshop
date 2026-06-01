@@ -2,8 +2,6 @@
 
 **Summary**: Vollständiger, von Hand nachvollziehbarer Workshop-Ablauf: lokal mit **k3d** einen 3-Node-Kubernetes-Cluster bauen, **OpenBao** per **Helm** im HA-/[[raft|Raft]]-Modus deployen, [[seal-unseal|initialisieren & unsealen]] (erst manuell mit Shamir zum Verstehen, dann **Auto-Unseal per Transit**), den Cluster mit **OpenTofu** konfigurieren und sich schließlich in der eigenen **GUI** und per **CLI** einloggen. Mit Tool-Installation für macOS und Ubuntu.
 
-
-
 ---
 
 ## Was dieser Workshop zeigt
@@ -86,9 +84,11 @@ sudo apt install unzip -y
 rm install-opentofu.sh
 
 # --- OpenBao CLI (.deb von den Releases) ---
-BAO_VERSION=2.2.0    # ggf. aktuelle Version von github.com/openbao/openbao/releases einsetzen
-wget "https://github.com/openbao/openbao/releases/download/v${BAO_VERSION}/bao_${BAO_VERSION}_linux_amd64.deb"
-sudo apt install -y "./bao_${BAO_VERSION}_linux_amd64.deb"
+cd /tmp
+wget https://github.com/openbao/openbao/releases/download/v2.5.4/openbao_2.5.4_linux_amd64.deb
+sudo apt install -y ./openbao_2.5.4_linux_amd64.deb
+which bao
+bao version
 ```
 
 (OpenBao-`.deb`-Installationsweg extern verifiziert: `openbao.org/docs/install`. Alternativ Snap: `sudo snap install openbao`.)
@@ -104,7 +104,7 @@ tofu version
 bao version
 ```
 
-> **CLI-Falle (gilt überall):** Die `bao`-CLI verbindet sich über `**VAULT_ADDR`/`VAULT_TOKEN`**, nicht über `BAO_ADDR`/`BAO_TOKEN` (Vault-Kompatibilität, extern verifiziert: `openbao.org/docs/commands`). Ausführlich erklärt in [[docker]] (Gotcha gemischte Präfixe). Wir nutzen daher durchgehend `VAULT_*`.
+> **CLI-Falle (gilt überall):** Die `bao`-CLI verbindet sich über `**VAULT_ADDR`/`VAULT_TOKEN`**, nicht über `BAO_ADDR`/`BAO_TOKEN` (Vault-Kompatibilität, extern verifiziert: `openbao.org/docs/commands`). Ausführlich erklärt in [[docker]] (Gotcha gemischte Präfixe). Wir nutzen daher durchgehend `VAULT_`*.
 
 ---
 
@@ -188,12 +188,18 @@ helm install openbao openbao/openbao -n openbao -f values-ha.yaml
 kubectl -n openbao get pods -w
 ```
 
-
-
 ### 2.4 Cluster initialisieren (nur Pod 0)
 
 ```bash
 kubectl -n openbao exec -ti openbao-0 -- bao operator init
+
+Unseal Key 1: <UNSEAL_KEY_1>
+Unseal Key 2: <UNSEAL_KEY_2>
+Unseal Key 3: <UNSEAL_KEY_3>
+Unseal Key 4: <UNSEAL_KEY_4>
+Unseal Key 5: <UNSEAL_KEY_5>
+
+Initial Root Token: <ROOT_TOKEN>
 ```
 
 Du erhältst **5 Unseal-Key-Shares**, **Threshold 3** und den **Initial Root Token** ([[seal-unseal]]). **Genau einmal sichtbar — sicher notieren.** Diese Keys brauchst du gleich für *jeden* Node.
@@ -226,6 +232,8 @@ kubectl -n openbao exec -ti openbao-2 -- bao operator unseal   # 3× dieselben K
 
 ```bash
 kubectl -n openbao exec -ti openbao-0 -- bao status
+
+kubectl -n openbao exec -ti openbao-0 -- bao login
 kubectl -n openbao exec -ti openbao-0 -- bao operator raft list-peers
 ```
 
@@ -267,9 +275,217 @@ kubectl -n openbao exec -ti openbao-0 -- bao operator unseal   # 3×
 
 > **Das ist der Aha-Moment für Auto-Unseal:** Jeder Pod-Neustart erzwingt manuelles Unseal. In Kubernetes ist das untragbar — deshalb Teil 4.
 >
-> Fällt ein **zweiter** Node aus, ist das Quorum verloren und der Cluster nimmt keine Schreibvorgänge mehr an (Raft ist CP — Konsistenz vor Verfügbarkeit, siehe [[raft]] Level 1 & 5).
+> Fällt ein **zweiter** Node aus, ist das Quorum verloren und der Cluster nimmt keine Schreibvorgänge mehr an (Raft ist CP — Konsistenz vor Verfügbarkeit.
 
 ---
+
+
+
+## Teil 4 — Ingress
+
+k3d Cluster starten
+
+```bash
+k3d cluster create openbao --servers 1 --agents 2 \
+    --port "80:80@loadbalancer" \
+    --port "443:443@loadbalancer"
+```
+
+   
+
+ values-ingress.yml
+
+```bash
+server:
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true      # node_id je Pod automatisch setzen
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable     = 1
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+
+          retry_join {
+            leader_api_addr = "http://openbao-0.openbao-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://openbao-1.openbao-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://openbao-2.openbao-internal:8200"
+          }
+        }
+
+        service_registration "kubernetes" {}
+
+  # API-Adresse muss bei tls_disable auf http stehen
+  extraEnvironmentVars:
+    BAO_ADDR: http://127.0.0.1:8200
+
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    activeService: true          # Ingress zeigt auf den aktiven (Leader-)Pod
+    hosts:
+      - host: openbao.local
+        paths: []
+    tls: []                      # kein TLS am Ingress (dev)
+
+ui:
+  enabled: true
+```
+
+
+
+
+
+OpenBao Helm Chart mit Ingress
+
+Das OpenBao-Chart ist ein Fork des Vault-Charts, die Ingress-Struktur ist identisch. values.yaml:
+
+  server:
+
+    # Für lokales Testen ohne TLS/Storage – dev mode
+
+    dev:
+
+      enabled: true
+
+    ingress:
+
+      enabled: true
+
+      ingressClassName: traefik
+
+      # Traefik annotations bei Bedarf, z.B. für websocket/timeout
+
+      annotations: {}
+
+      hosts:
+
+        - host: bao.[localhost](http://localhost)
+
+          paths:
+
+            - /
+
+      # für lokales http kein tls-Block nötig
+
+      tls: []
+
+    # OpenBao API lauscht auf 8200 – das Chart setzt das Service-Target passen
+
+
+
+export VAULT_ADDR=[http://bao.localhost:8080](http://bao.localhost:8080)
+
+  curl $VAULT_ADDR/v1/sys/health
+
+  # oder UI im Browser: [http://bao.localhost:8080/ui](http://bao.localhost:8080/ui)
+
+  Falls bao.[localhost](http://localhost) nicht automatisch auf 127.0.0.1 auflöst, in /etc/hosts ergänzen:
+
+  127.0.0.1 bao.[localhost](http://localhost)
+
+
+
+Zertifikat
+
+1. cert-manager installieren
+
+  helm repo add jetstack [https://charts.jetstack.io](https://charts.jetstack.io)
+
+  helm repo update
+
+  helm install cert-manager jetstack/cert-manager \
+
+    --namespace cert-manager --create-namespace \
+
+    --set crds.enabled=true
+
+  Prüfen, dass die Pods laufen:
+
+  kubectl get pods -n cert-manager
+
+  2. Cloudflare API-Token erstellen
+
+  Im Cloudflare-Dashboard → My Profile → API Tokens → Create Token. Nutze die Vorlage „Edit zone DNS" mit diesen Rechten:
+
+  - Zone → DNS → Edit
+
+  - Zone → Zone → Read
+
+  - Beschränkt auf deine Zone [softxpert.de](http://softxpert.de)
+
+  Dann das Token als Secret anlegen (im selben Namespace wie OpenBao, z. B. openbao):
+
+  kubectl create secret generic cloudflare-api-token-secret \
+
+    --namespace <openbao-namespace> \
+
+    --from-literal=api-token=<DEIN_CLOUDFLARE_API_TOKEN>
+
+
+
+ ▎ Hinweis: Bei ClusterIssuer sucht cert-manager das API-Token-Secret standardmäßig im cert-manager-Namespace. Lege es daher entweder dort an, oder verwende einen namespace-gebundenen Issuer. Am
+
+  ▎ einfachsten: das Secret zusätzlich im cert-manager-Namespace anlegen.
+
+  3. ClusterIssuer anwenden
+
+  kubectl apply -f cert-manager-cloudflare.yaml
+
+  Status prüfen (sollte Ready=True werden):
+
+  kubectl get clusterissuer letsencrypt-prod -o wide
+
+  4. Helm-Werte ausrollen
+
+  helm upgrade openbao openbao/openbao \
+
+    -n <openbao-namespace> \
+
+    -f values-ingress.yml
+
+  cert-manager erkennt die Annotation [cert-manager.io/cluster-issuer](http://cert-manager.io/cluster-issuer) am Ingress, fordert das Zertifikat per DNS-01 an und legt das Secret openbao-tls an. Beobachten:
+
+  kubectl get certificate -n <openbao-namespace>
+
+  kubectl describe certificate openbao-tls -n <openbao-namespace>
+
+
+
+Bevor du startest — 3 Dinge anpassen
+
+  1. Domain ersetzen: In values-ingress.yml und in cert-manager-cloudflare.yaml (dnsZones) deine echte öffentliche Domain statt [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) / [softxpert.de](http://softxpert.de) eintragen.
+
+  2. DNS-Record: Ein A/CNAME-Record für [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) muss in Cloudflare existieren und auf deinen Ingress/LoadBalancer zeigen — auch wenn nur intern erreichbar. (Für DNS-01 selbst ist nur
+
+  die Zone wichtig, aber Clients müssen den Namen ja auflösen.)
+
+  3. Erst mit Staging testen: Bei Tests letsencrypt-staging als Issuer nutzen (Let's Encrypt Prod hat strenge Rate-Limits). Wenn alles grün ist, auf letsencrypt-prod umstellen.
+
+  Wichtig zur Architektur
+
+  TLS endet weiterhin am Traefik-Ingress. Intern läuft OpenBao unverändert über HTTP (tls_disable = 1). Client→Ingress ist verschlüsselt und vertraut, Ingress→Pod ist clusterintern HTTP. Das ist für die
+
+  meisten Setups genau richtig — sag Bescheid, falls du echtes End-to-End-TLS bis in die Pods brauchst, das ist ein deutlich größerer Umbau (Vault/OpenBao-Listener auf TLS, Cert-Verteilung an alle Pods,
+
+  Backend-Scheme https am Ingress).
+
+
+
+
 
 ## Teil 4 — Auto-Unseal mit Transit
 
@@ -458,8 +674,6 @@ export VAULT_ADDR="http://127.0.0.1:8200"
 export VAULT_TOKEN="<Initial Root Token aus 4.5>"
 ```
 
-
-
 DNS
 
 Es sind also zwei Schritte nötig: (1) Host-Port zu Traefik durchreichen, (2) Ingress-Objekt anlegen.
@@ -505,14 +719,6 @@ kubectl apply -f openbao-ui-ingress.yaml
 
 Danach erreichbar unter http://openbao.172.16.0.13.nip.io/.
 ```
-
-
-
-
-
-
-
-
 
 ### 5.2 OpenTofu-Projekt
 
@@ -618,8 +824,6 @@ bao auth list
 
 ### GUI im Browser
 
-
-
 ```
 http://openbao.172.16.0.13.nip.io/
 ```
@@ -657,8 +861,6 @@ Der Token landet nach dem Login in `~/.vault-token`; weitere `bao`-Befehle finde
 
 Da der Cluster Auto-Unseal über transit nutzt, gibt es statt Unseal-Keys Recovery-Keys (3 von 5). Damit lässt sich ein neuer Root-Token erzeugen:
 
-
-
 ```
 ???
 
@@ -679,11 +881,7 @@ Was nötig war (und warum es nicht direkt ging): OpenBao v2.5.4 hat die generate
   
 ```
 
-
-
 ## Postgresql mit rotierenen Passwort
-
-
 
 ```bash
 services:
@@ -705,8 +903,6 @@ volumes:
 
 
 ```
-
-
 
 Verbinden lokal:
 
@@ -731,19 +927,9 @@ Typische täglich rotierbare Secrets:
    Ein fester PostgreSQL-User bleibt bestehen, aber OpenBao rotiert dessen Passwort regelmäßig
 ```
 
-
-
-
-
-
-
-
-
 ## OpenBao Secrets Operator
 
 In Kubernetes können Pods Secrets über Kubernetes Secrets konsumieren, z. B. mit dem OpenBao Secrets Operator
-
-
 
 ```
 helm repo add openbao-secrets-operator https://openbao.github.io/openbao-secrets-operator
@@ -756,12 +942,6 @@ helm upgrade --install external-secrets external-secrets/external-secrets \
      --set installCRDs=true \
      --wait --timeout 180s 2>&1 | tail -15
 ```
-
-
-
-
-
-
 
 ## Aufräumen
 
@@ -778,8 +958,6 @@ k3d cluster delete openbao
 ```
 
 ---
-
-
 
 ## Vorschlag für den Workshop-Ablauf (≈ 2–2,5 h)
 
@@ -807,6 +985,4 @@ k3d cluster delete openbao
 - **CLI ignoriert die Adresse** — `BAO_ADDR` statt `VAULT_ADDR` gesetzt (siehe Gotcha oben, [[docker]]).
 - `**tofu apply` 403/connection refused** — Port-Forward läuft nicht, oder `VAULT_TOKEN` fehlt/abgelaufen.
 - **Dev-Unsealer neu gestartet** → Transit-Key verloren → HA-Cluster nicht mehr auto-unsealbar. Im Workshop einfach Teil 4 neu durchlaufen; produktiv Unsealer persistent halten.
-
-
 

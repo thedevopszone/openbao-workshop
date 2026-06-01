@@ -14,7 +14,7 @@ Es gibt zwei grundverschiedene Betriebsarten. Der Unterschied ist wichtig, weil 
 
 |                   | **Dev-Mode** (Variante A) | **Persistenter Server** (Variante B)   |
 | ----------------- | ------------------------- | -------------------------------------- |
-| Storage           | nur RAM (in-memory)       | Platte (`file` / [[raft]])             |
+| Storage           | nur RAM (in-memory)       | Platte file/raft                       |
 | Initialisierung   | **automatisch**           | **manuell** (`bao operator init`)      |
 | Unseal            | **automatisch**           | **manuell** (`bao operator unseal`)    |
 | Root-Token        | fest vorgebbar            | wird bei Init erzeugt                  |
@@ -70,19 +70,34 @@ Start:
 docker compose up -d
 ```
 
-OpenBao lauscht jetzt per HTTP auf **Port 8200** (source: `raw/docs/get-started/developer-qs.md`).
+OpenBao lauscht jetzt per HTTP auf **Port 8200**.
 
-**Aufruf im Browser** (das `???` aus der Quelle): die Web-UI liegt unter `/ui`:
+**Aufruf im Browser**:
 
 ```
 http://localhost:8200/ui
+
+oder
+http://<IP>:8200/ui
 ```
 
 Login in der UI: Methode **Token**, Token: `dev-only-token`
 
-CLI gegen den Dev-Server (vom Host, falls `bao` installiert):
+CLI gegen den Dev-Server (vom Host, vorher `bao` installieren):
 
 ```bash
+# Installiere bao cli
+Mac => brew install openbao
+Rhel => dnf install -y epel-release
+        dnf install -y openbao
+
+Linux => 
+cd /tmp
+wget https://github.com/openbao/openbao/releases/download/v2.5.4/openbao_2.5.4_linux_amd64.deb
+sudo apt install -y ./openbao_2.5.4_linux_amd64.deb
+which bao
+bao version
+
 export VAULT_ADDR="http://127.0.0.1:8200"
 export VAULT_TOKEN="dev-only-token"
 bao status
@@ -140,7 +155,7 @@ services:
       - ./config:/openbao/config:ro
       - openbao-file:/openbao/file
       - openbao-logs:/openbao/logs
-    command: server -config=/openbao/config
+    command: server
     restart: unless-stopped
 
 volumes:
@@ -162,7 +177,9 @@ Start:
 docker compose up -d
 docker compose logs -f openbao   # zeigt: "core: security barrier not initialized"
 
-docker compose exec openbao bao status
+export BAO_ADDR='http://127.0.0.1:8200' # Da sonst versucht wird über https zu connecten
+
+bao status
 
 Key                Value
 ---                -----
@@ -186,7 +203,8 @@ Beim ersten Start ist der Server **uninitialisiert und sealed**. Initialisieren 
 CLI im Container ausführen — so brauchst du `bao` nicht auf dem Host:
 
 ```bash
-docker compose exec openbao bao operator init
+bao operator init
+
 ```
 
 > Falls `bao` im Container die Adresse nicht findet, voranstellen:
@@ -195,33 +213,33 @@ docker compose exec openbao bao operator init
 Standardmäßig bekommst du **5 Unseal-Key-Shares** und einen **Threshold von 3** sowie den **Initial Root Token**:
 
 ```
-Unseal Key 1: <…>
-Unseal Key 2: <…>
-Unseal Key 3: <…>
-Unseal Key 4: <…>
-Unseal Key 5: <…>
+Unseal Key 1: TXcB0LxkJrcPQUZhxufnvocMJDzxE0WRvtnlWO9p/ED0
+Unseal Key 2: GEOFpPw9JQz+K+naI+9PPkcdxUNH+24tKqhj3Xxkk21l
+Unseal Key 3: khgey07Vy8OzuFsZu3pAxzaBsTY8/tuFLmjWpFuaQATJ
+Unseal Key 4: XVdCI3eTl+NY92q3kYAAKyS4Qff2pBLWCvoB75dYkNxD
+Unseal Key 5: dDL9CHXPyXamdGe+kKL/Y/opEzFL9fWr2H84P9ijiINs
 
-Initial Root Token: s.<…>
+Initial Root Token: s.o13X7rIQgo6tmeBh2yXHW4gF
 ```
 
-> **Diese Ausgabe erscheint genau einmal.** Sicher speichern (am besten Shares auf verschiedene Personen/Tresore verteilt). Ohne genügend Unseal-Keys sind die Daten unwiederbringlich verschlüsselt; mit dem Root-Token hat man Vollzugriff. Für Produktion lieber Auto-Unseal per KMS statt Shamir-Shares — siehe [[seal-unseal]].
+> **Diese Ausgabe erscheint genau einmal.** Sicher speichern (am besten Shares auf verschiedene Personen/Tresore verteilt). Ohne genügend Unseal-Keys sind die Daten unwiederbringlich verschlüsselt; mit dem Root-Token hat man Vollzugriff. Für Produktion lieber Auto-Unseal per KMS statt Shamir-Shares.
 >
-> Andere Aufteilung: `bao operator init -key-shares=1 -key-threshold=1` (nur Test) oder Auto-Unseal über eine `seal`-Stanza ([[configuration]]).
+> Andere Aufteilung: `bao operator init -key-shares=1 -key-threshold=1` (nur Test) 
 
 ## Unseal
 
 Der Node ist jetzt initialisiert, aber noch **sealed**. Je drei **verschiedene** Shares freischalten (Threshold = 3). `bao operator unseal` fragt interaktiv nach einem Share; dreimal mit unterschiedlichen Keys ausführen:
 
 ```bash
-docker compose exec openbao bao operator unseal   # Key 1 eingeben
-docker compose exec openbao bao operator unseal   # Key 2 eingeben
-docker compose exec openbao bao operator unseal   # Key 3 eingeben
+bao operator unseal   # Key 1 eingeben
+bao operator unseal   # Key 2 eingeben
+bao operator unseal   # Key 3 eingeben
 ```
 
 Nach dem dritten Share zeigt `Sealed false`. Prüfen:
 
 ```bash
-docker compose exec openbao bao status
+bao status
 ```
 
 > Jeder Node muss **einzeln** entsiegelt werden; Unseal propagiert nicht im Cluster ([[seal-unseal]]). Nach jedem Neustart des Containers ist erneutes Unseal nötig — das ist der Hauptgrund, in Produktion Auto-Unseal zu verwenden.
@@ -234,9 +252,9 @@ UI im Browser öffnen:
 http://localhost:8200/ui
 ```
 
-Auth-Methode **Token** wählen, den **Initial Root Token** aus der Init-Ausgabe eintragen, einloggen. Danach lassen sich Secrets Engines ([[secrets]]), Auth-Methoden ([[auth]]) und Policies ([[policies]]) per Klick verwalten.
+Auth-Methode **Token** wählen, den **Initial Root Token** aus der Init-Ausgabe eintragen, einloggen. Danach lassen sich Secrets Engines Auth-Methoden und Policies per Klick verwalten.
 
-> Den Root-Token nur für das initiale Setup nutzen. Danach eine reguläre Auth-Methode (z. B. userpass/OIDC) und [[policies]] einrichten und mit eingeschränkten [[tokens]] arbeiten.
+> Den Root-Token nur für das initiale Setup nutzen. Danach eine reguläre Auth-Methode (z. B. userpass/OIDC) und policies einrichten und mit eingeschränkten tokens arbeiten.
 
 ## Login in der CLI
 
@@ -261,7 +279,7 @@ bao login <Initial-Root-Token>
 bao token lookup
 ```
 
-Der Token wird danach im Token-Helper unter `~/.vault-token` abgelegt (extern verifiziert: `openbao.org/docs/commands/`); weitere `bao`-Befehle finden ihn automatisch.
+Der Token wird danach im Token-Helper unter `~/.vault-token` abgelegt. Weitere `bao`-Befehle finden ihn automatisch.
 
 **B) Im Container:**
 
