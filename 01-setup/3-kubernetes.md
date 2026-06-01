@@ -1162,6 +1162,9 @@ tofu destroy
 
 # kompletter Reset: k3d-Cluster löschen
 k3d cluster delete openbao
+
+# Postgres-Demo-DB stoppen und Daten-Volume entfernen (-v)
+docker compose -f files/3-kubernetes/postgres/docker-compose.yml down -v
 ```
 
 ---
