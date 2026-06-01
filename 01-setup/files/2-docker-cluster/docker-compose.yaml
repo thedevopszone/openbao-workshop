@@ -1,0 +1,45 @@
+services:
+  bao-1:
+    image: openbao/openbao:latest
+    container_name: bao-1
+    ports:
+      - "8200:8200"          # Host 8200 → bao-1 API
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ./config/bao-1.hcl:/openbao/config/bao.hcl:ro
+      - ./data/bao-1:/openbao/data
+    environment:
+      - BAO_ADDR=http://127.0.0.1:8200
+    command: server -config=/openbao/config/bao.hcl
+    restart: unless-stopped
+
+  bao-2:
+    image: openbao/openbao:latest
+    container_name: bao-2
+    ports:
+      - "8201:8200"          # Host 8201 → bao-2 API (NICHT der Cluster-Port!)
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ./config/bao-2.hcl:/openbao/config/bao.hcl:ro
+      - ./data/bao-2:/openbao/data
+    environment:
+      - BAO_ADDR=http://127.0.0.1:8200
+    command: server -config=/openbao/config/bao.hcl
+    restart: unless-stopped
+
+  bao-3:
+    image: openbao/openbao:latest
+    container_name: bao-3
+    ports:
+      - "8202:8200"          # Host 8202 → bao-3 API
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ./config/bao-3.hcl:/openbao/config/bao.hcl:ro
+      - ./data/bao-3:/openbao/data
+    environment:
+      - BAO_ADDR=http://127.0.0.1:8200
+    command: server -config=/openbao/config/bao.hcl
+    restart: unless-stopped
