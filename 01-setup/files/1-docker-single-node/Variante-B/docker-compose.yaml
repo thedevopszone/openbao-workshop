@@ -12,7 +12,7 @@ services:
       - ./config:/openbao/config:ro
       - openbao-file:/openbao/file
       - openbao-logs:/openbao/logs
-    command: server -config=/openbao/config/config.hcl
+    command: server
     restart: unless-stopped
 
 volumes:
