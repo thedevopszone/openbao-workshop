@@ -886,10 +886,12 @@ Typische täglich rotierbare Secrets:
 In Kubernetes können Pods Secrets über Kubernetes Secrets konsumieren, z. B. mit dem OpenBao Secrets Operator
 
 ```
-helm repo add openbao-secrets-operator https://openbao.github.io/openbao-secrets-operator
-helm repo update openbao-secrets-operator
+helm repo add external-secrets https://charts.external-secrets.io
 
-helm search repo openbao-secrets-operator
+#helm install external-secrets external-secrets/external-secrets \
+#    -n external-secrets --create-namespace
+
+
 
 helm upgrade --install external-secrets external-secrets/external-secrets \
      -n external-secrets --create-namespace \
@@ -897,9 +899,260 @@ helm upgrade --install external-secrets external-secrets/external-secrets \
      --wait --timeout 180s 2>&1 | tail -15
 ```
 
+### Postgres-Passwort alle 24 h rotieren (Database Secrets Engine)
+
+Der Operator oben **liefert** Secrets nach Kubernetes — **erzeugt/rotiert** werden sie in OpenBao. Für Postgres macht das die **Database Secrets Engine**. Wir nutzen eine **Static Role**: ein **bereits bestehender** Postgres-User bleibt erhalten, OpenBao **rotiert nur sein Passwort** (Muster 5 aus der Liste oben). Das ist der Unterschied zu *Dynamic Roles*, die bei jedem Abruf einen neuen Wegwerf-User mit TTL anlegen.
+
+> **Static vs. Dynamic:** Static Role = fester User, rotierendes Passwort (gut für Apps mit fester DB-Identität). Dynamic Role = OpenBao legt pro Abruf einen neuen User an. Die Aufgabe hier — „erst einen User anlegen, dessen Passwort rotiert wird" — ist also genau eine **Static Role**.
+
+#### Schritt 1 — den zu rotierenden User zuerst in Postgres anlegen
+
+Static Roles rotieren nur, sie **erstellen** keinen User. Also legen wir ihn einmal selbst an. Das Start-Passwort ist egal — OpenBao überschreibt es bei der ersten Rotation sofort:
+
+```bash
+psql -h localhost -p 5432 -U postgres -d appdb        # Passwort: changeme
+
+CREATE ROLE app_user WITH LOGIN PASSWORD 'init-changeme';
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
+\q
+```
+
+Der **Connection-User**, mit dem sich OpenBao verbindet, muss fremde Passwörter ändern dürfen. Für den Workshop nehmen wir den `postgres`-Superuser aus der [docker-compose](#postgresql-mit-rotierenen-passwort) oben; produktiv ein dedizierter Rotations-User mit minimalen Rechten.
+
+#### Schritt 2 — Erreichbarkeit: Postgres aus dem k3d-Cluster
+
+Postgres läuft per Docker Compose auf dem **Host** (Port 5432). Die OpenBao-Pods im k3d-Cluster erreichen den Host über **`host.k3d.internal`** — k3d spiegelt diesen Namen automatisch in den Cluster (extern verifiziert: `k3d.io`, host-aliases). Genau das steht als Default `postgres_host` in `database.tf`.
+
+#### Schritt 3 — Engine, Connection & Static Role per OpenTofu anlegen
+
+Die Datei `terraform/database.tf` liegt **neben `main.tf`** im selben Projekt und wird vom selben `tofu apply` mit erfasst. Kern der Datei:
+
+```hcl
+# 1) Database-Secrets-Engine unter "database/"
+resource "vault_mount" "database" {
+  path = "database"
+  type = "database"
+}
+
+# 2) Verbindung zur Postgres-Instanz (Connection-User = Superuser)
+resource "vault_database_secret_backend_connection" "postgres" {
+  backend       = vault_mount.database.path
+  name          = "postgres"
+  allowed_roles = ["app-static"]
+
+  postgresql {
+    connection_url = "postgresql://{{username}}:{{password}}@host.k3d.internal:5432/appdb?sslmode=disable"
+    username       = "postgres"
+    password       = "changeme"
+  }
+}
+
+# 3) Static Role: rotiert app_user alle 86400 s = 24 h
+resource "vault_database_secret_backend_static_role" "app" {
+  backend             = vault_mount.database.path
+  name                = "app-static"
+  db_name             = vault_database_secret_backend_connection.postgres.name
+  username            = "app_user"
+  rotation_period     = 86400
+  rotation_statements = ["ALTER USER \"{{name}}\" WITH PASSWORD '{{password}}';"]
+}
+```
+
+Anwenden (Port-Forward wie in Teil 5 muss laufen):
+
+```bash
+export VAULT_ADDR=http://127.0.0.1:8200
+export VAULT_TOKEN=<root>
+
+tofu plan
+tofu apply
+```
+
+(Ressourcen-Typen `vault_mount` (type `database`), `vault_database_secret_backend_connection` und `vault_database_secret_backend_static_role` mit `rotation_period`/`rotation_statements` extern verifiziert gegen die OpenTofu-Registry `hashicorp/vault`.)
+
+#### Schritt 4 — Rotation prüfen
+
+```bash
+# aktuelles (bereits rotiertes) Passwort lesen
+bao read database/static-creds/app-static
+```
+
+Erwartet ungefähr:
+
+```
+Key                    Value
+---                    -----
+last_vault_rotation    2026-06-01T12:00:00Z
+password               A1b2C3d4...              # von OpenBao gesetzt, nicht init-changeme
+rotation_period        86400
+ttl                    86399                    # zählt bis zur nächsten Rotation herunter
+username               app_user
+```
+
+Sofort von Hand rotieren (zum Vorführen, statt 24 h zu warten):
+
+```bash
+bao write -f database/rotate-role/app-static
+bao read database/static-creds/app-static       # password hat sich geändert
+```
+
+Login mit dem rotierten Passwort gegenchecken:
+
+```bash
+PGPASSWORD=$(bao read -field=password database/static-creds/app-static) \
+  psql -h localhost -p 5432 -U app_user -d appdb -c '\conninfo'
+```
+
+#### Schritt 5 — das rotierte Passwort nach Kubernetes liefern (ESO)
+
+Jetzt schließt sich der Kreis zum Operator: ESO liest die Static-Creds aus OpenBao und schreibt sie in ein Kubernetes-`Secret`, das die App mountet. Über `refreshInterval` holt ESO regelmäßig das **aktuelle** Passwort:
+
+`files/3-kubernetes/postgres/eso-postgres.yaml`:
+
+```yaml
+# eso-postgres.yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: openbao
+spec:
+  provider:
+    vault:
+      server: "http://openbao.openbao.svc:8200"
+      path: "database"            # Mount der DB-Engine
+      version: v1                 # static-creds ist KV-v1-artig, kein /data/-Pfad
+      auth:
+        tokenSecretRef:
+          name: openbao-token
+          namespace: external-secrets
+          key: token
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: app-db
+  namespace: default
+spec:
+  refreshInterval: 1h            # kürzer als rotation_period (24 h)!
+  secretStoreRef:
+    name: openbao
+    kind: ClusterSecretStore
+  target:
+    name: app-db                 # so heißt das erzeugte k8s-Secret
+  data:
+    - secretKey: username
+      remoteRef:
+        key: static-creds/app-static
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: static-creds/app-static
+        property: password
+```
+
+```bash
+# Token für ESO (mind. Policy db-app-read aus database.tf)
+kubectl -n external-secrets create secret generic openbao-token \
+  --from-literal=token="$VAULT_TOKEN"
+
+kubectl apply -f eso-postgres.yaml
+kubectl get externalsecret app-db
+kubectl get secret app-db -o jsonpath='{.data.password}' | base64 -d
+```
+
+> **Achtung Rotation:** Mit Static Roles ändert sich das DB-Passwort **serverseitig**. Ohne ESO (oder App-Neustart/Re-Read) hält deine App weiter das alte Passwort und fliegt nach der Rotation raus. `refreshInterval` muss daher **kürzer** sein als die `rotation_period`.
+
+#### Schritt 6 — Demo-App, die das `app-db`-Secret mountet
+
+Eine kleine App beweist den ganzen Kreis: Sie konsumiert das von ESO gepflegte `app-db`-Secret und verbindet sich damit gegen Postgres. Wir mounten das Secret **doppelt** — als Env-Variablen (`secretKeyRef`) **und** als Volume (Dateien unter `/etc/db-creds/`) — weil sich beide bei einer Rotation unterschiedlich verhalten:
+
+`files/3-kubernetes/postgres/demo-app.yaml`:
+
+```yaml
+# demo-app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: demo-app }
+  template:
+    metadata:
+      labels: { app: demo-app }
+    spec:
+      containers:
+        - name: demo
+          image: postgres:16            # bringt psql mit
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                # Passwort bei JEDEM Versuch frisch aus dem gemounteten Volume lesen,
+                # damit die App die Rotation ohne Neustart mitbekommt.
+                export PGUSER="$(cat /etc/db-creds/username)"
+                export PGPASSWORD="$(cat /etc/db-creds/password)"
+                echo "[demo] verbinde als $PGUSER ..."
+                psql -h "$PGHOST" -d "$PGDATABASE" -c 'SELECT now();' \
+                  || echo "[demo] Login fehlgeschlagen"
+                sleep 30
+              done
+          env:
+            - name: PGHOST
+              value: host.k3d.internal   # Postgres läuft auf dem Docker-Host
+            - name: PGDATABASE
+              value: appdb
+            # zusätzlich als Env injiziert (Demonstration secretKeyRef):
+            - name: APP_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-db
+                  key: username
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-db
+                  key: password
+          volumeMounts:
+            - name: db-creds
+              mountPath: /etc/db-creds
+              readOnly: true
+      volumes:
+        - name: db-creds
+          secret:
+            secretName: app-db           # von ESO erzeugt (Schritt 5)
+```
+
+```bash
+kubectl apply -f demo-app.yaml
+kubectl logs -l app=demo-app -f          # alle 30 s ein erfolgreicher SELECT now();
+
+# das gemountete Secret als Dateien im Pod:
+kubectl exec deploy/demo-app -- ls /etc/db-creds
+kubectl exec deploy/demo-app -- cat /etc/db-creds/username
+```
+
+**Rotation live sehen** — Passwort in OpenBao rotieren und zusehen, wie die App ohne Neustart weiterläuft:
+
+```bash
+bao write -f database/rotate-role/app-static     # neues Passwort serverseitig
+# ESO holt es beim nächsten refreshInterval -> kubelet synct das Volume (~1 min)
+kubectl logs -l app=demo-app -f                  # SELECT läuft weiter durch
+```
+
+> **Warum Volume statt Env?** Kubelet aktualisiert **gemountete Secret-Volumes automatisch** (Verzögerung ~1 min), sobald ESO das `app-db`-Secret neu schreibt. **Env-Variablen per `secretKeyRef` werden dagegen nur beim Pod-Start gesetzt** und bleiben danach eingefroren (`APP_DB_PASSWORD` zeigt also das alte Passwort, bis der Pod neu startet). Deshalb liest die Demo das Passwort bei jedem Versuch frisch aus `/etc/db-creds/` — genau das ist das Muster für rotierende Secrets. Wer zwingend Env braucht, koppelt einen Reloader (z. B. `stakater/Reloader`) dazu, der den Pod bei Secret-Änderung neu rollt.
+
 ## Aufräumen
 
 ```bash
+# Demo-App + ESO-Objekte entfernen
+kubectl delete -f files/3-kubernetes/postgres/demo-app.yaml
+kubectl delete -f files/3-kubernetes/postgres/eso-postgres.yaml
+
 # OpenBao-Releases entfernen
 helm uninstall openbao -n openbao
 helm uninstall openbao-transit -n transit

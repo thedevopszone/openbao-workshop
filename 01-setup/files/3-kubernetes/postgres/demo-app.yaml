@@ -1,0 +1,56 @@
+# demo-app.yaml — Demo-App, die das von ESO erzeugte app-db-Secret mountet.
+# Mountet das Secret doppelt: als Env-Variablen (secretKeyRef) UND als Volume
+# (/etc/db-creds/). Nur das Volume aktualisiert kubelet bei Rotation automatisch.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: demo-app }
+  template:
+    metadata:
+      labels: { app: demo-app }
+    spec:
+      containers:
+        - name: demo
+          image: postgres:16            # bringt psql mit
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                # Passwort bei JEDEM Versuch frisch aus dem gemounteten Volume lesen,
+                # damit die App die Rotation ohne Neustart mitbekommt.
+                export PGUSER="$(cat /etc/db-creds/username)"
+                export PGPASSWORD="$(cat /etc/db-creds/password)"
+                echo "[demo] verbinde als $PGUSER ..."
+                psql -h "$PGHOST" -d "$PGDATABASE" -c 'SELECT now();' \
+                  || echo "[demo] Login fehlgeschlagen"
+                sleep 30
+              done
+          env:
+            - name: PGHOST
+              value: host.k3d.internal   # Postgres läuft auf dem Docker-Host
+            - name: PGDATABASE
+              value: appdb
+            # zusätzlich als Env injiziert (Demonstration secretKeyRef):
+            - name: APP_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-db
+                  key: username
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-db
+                  key: password
+          volumeMounts:
+            - name: db-creds
+              mountPath: /etc/db-creds
+              readOnly: true
+      volumes:
+        - name: db-creds
+          secret:
+            secretName: app-db           # von ESO erzeugt (Schritt 5)
