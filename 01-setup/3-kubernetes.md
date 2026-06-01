@@ -111,7 +111,9 @@ bao version
 ## Teil 1 — k3d-Cluster (3 Nodes) erstellen
 
 ```bash
-k3d cluster create openbao --servers 1 --agents 2
+k3d cluster create openbao --servers 1 --agents 2 \
+    --port "80:80@loadbalancer" \
+    --port "443:443@loadbalancer"
 ```
 
 Das ergibt **drei Nodes** (1 Server + 2 Agents). In k3s/k3d ist auch der Server-Node **schedulebar** (kein Control-Plane-Taint wie bei kubeadm), es stehen also drei Nodes für Pods bereit (extern verifiziert: `k3d.io`). Genau das brauchen die drei OpenBao-Pods, denn das Helm-Chart verteilt sie per **Pod-Anti-Affinity** auf verschiedene Nodes ([[k8s-ha-setup]]).
@@ -279,8 +281,6 @@ kubectl -n openbao exec -ti openbao-0 -- bao operator unseal   # 3×
 
 ---
 
-
-
 ## Teil 4 — Ingress
 
 k3d Cluster starten
@@ -290,8 +290,6 @@ k3d cluster create openbao --servers 1 --agents 2 \
     --port "80:80@loadbalancer" \
     --port "443:443@loadbalancer"
 ```
-
-   
 
  values-ingress.yml
 
@@ -345,135 +343,95 @@ ui:
   enabled: true
 ```
 
-
-
-
-
 OpenBao Helm Chart mit Ingress
 
 Das OpenBao-Chart ist ein Fork des Vault-Charts, die Ingress-Struktur ist identisch. values.yaml:
 
   server:
 
-    # Für lokales Testen ohne TLS/Storage – dev mode
+```
+# Für lokales Testen ohne TLS/Storage – dev mode
 
-    dev:
+dev:
 
-      enabled: true
+  enabled: true
 
-    ingress:
+ingress:
 
-      enabled: true
+  enabled: true
 
-      ingressClassName: traefik
+  ingressClassName: traefik
 
-      # Traefik annotations bei Bedarf, z.B. für websocket/timeout
+  # Traefik annotations bei Bedarf, z.B. für websocket/timeout
 
-      annotations: {}
+  annotations: {}
 
-      hosts:
+  hosts:
 
-        - host: bao.[localhost](http://localhost)
+    - host: bao.[localhost](http://localhost)
 
-          paths:
+      paths:
 
-            - /
+        - /
 
-      # für lokales http kein tls-Block nötig
+  # für lokales http kein tls-Block nötig
 
-      tls: []
+  tls: []
 
-    # OpenBao API lauscht auf 8200 – das Chart setzt das Service-Target passen
-
-
+# OpenBao API lauscht auf 8200 – das Chart setzt das Service-Target passen
+```
 
 export VAULT_ADDR=[http://bao.localhost:8080](http://bao.localhost:8080)
 
   curl $VAULT_ADDR/v1/sys/health
 
-  # oder UI im Browser: [http://bao.localhost:8080/ui](http://bao.localhost:8080/ui)
+# oder UI im Browser: [http://bao.localhost:8080/ui](http://bao.localhost:8080/ui)
 
   Falls bao.[localhost](http://localhost) nicht automatisch auf 127.0.0.1 auflöst, in /etc/hosts ergänzen:
 
   127.0.0.1 bao.[localhost](http://localhost)
 
-
-
 Zertifikat
 
 1. cert-manager installieren
-
   helm repo add jetstack [https://charts.jetstack.io](https://charts.jetstack.io)
-
   helm repo update
-
   helm install cert-manager jetstack/cert-manager \
-
     --namespace cert-manager --create-namespace \
-
     --set crds.enabled=true
-
   Prüfen, dass die Pods laufen:
-
   kubectl get pods -n cert-manager
-
-  2. Cloudflare API-Token erstellen
-
-  Im Cloudflare-Dashboard → My Profile → API Tokens → Create Token. Nutze die Vorlage „Edit zone DNS" mit diesen Rechten:
-
-  - Zone → DNS → Edit
-
-  - Zone → Zone → Read
-
-  - Beschränkt auf deine Zone [softxpert.de](http://softxpert.de)
-
-  Dann das Token als Secret anlegen (im selben Namespace wie OpenBao, z. B. openbao):
-
-  kubectl create secret generic cloudflare-api-token-secret \
-
-    --namespace <openbao-namespace> \
-
-    --from-literal=api-token=<DEIN_CLOUDFLARE_API_TOKEN>
-
-
-
- ▎ Hinweis: Bei ClusterIssuer sucht cert-manager das API-Token-Secret standardmäßig im cert-manager-Namespace. Lege es daher entweder dort an, oder verwende einen namespace-gebundenen Issuer. Am
-
-  ▎ einfachsten: das Secret zusätzlich im cert-manager-Namespace anlegen.
-
-  3. ClusterIssuer anwenden
-
-  kubectl apply -f cert-manager-cloudflare.yaml
-
-  Status prüfen (sollte Ready=True werden):
-
-  kubectl get clusterissuer letsencrypt-prod -o wide
-
-  4. Helm-Werte ausrollen
-
-  helm upgrade openbao openbao/openbao \
-
-    -n <openbao-namespace> \
-
+  1. Cloudflare API-Token erstellen
+    Cloudflare-Dashboard → My Profile → API Tokens → Create Token. Nutze die Vorlage „Edit zone DNS" mit diesen Rechten:
+    Zone → DNS → Edit
+    Zone → Zone → Read
+    Beschränkt auf deine Zone [softxpert.de](http://softxpert.de)
+    nn das Token als Secret anlegen (im selben Namespace wie OpenBao, z. B. openbao):
+    bectl create secret generic cloudflare-api-token-secret \
+    --namespace  \
+    --from-literal=api-token=
+    inweis: Bei ClusterIssuer sucht cert-manager das API-Token-Secret standardmäßig im cert-manager-Namespace. Lege es daher entweder dort an, oder verwende einen namespace-gebundenen Issuer. Am
+    einfachsten: das Secret zusätzlich im cert-manager-Namespace anlegen.
+  2. ClusterIssuer anwenden
+    bectl apply -f cert-manager-cloudflare.yaml
+    atus prüfen (sollte Ready=True werden):
+    bectl get clusterissuer letsencrypt-prod -o wide
+  3. Helm-Werte ausrollen
+    lm upgrade openbao openbao/openbao \
+    -n  \
     -f values-ingress.yml
-
-  cert-manager erkennt die Annotation [cert-manager.io/cluster-issuer](http://cert-manager.io/cluster-issuer) am Ingress, fordert das Zertifikat per DNS-01 an und legt das Secret openbao-tls an. Beobachten:
-
-  kubectl get certificate -n <openbao-namespace>
-
-  kubectl describe certificate openbao-tls -n <openbao-namespace>
-
-
+    rt-manager erkennt die Annotation [cert-manager.io/cluster-issuer](http://cert-manager.io/cluster-issuer) am Ingress, fordert das Zertifikat per DNS-01 an und legt das Secret openbao-tls an. Beobachten:
+    bectl get certificate -n 
+    bectl describe certificate openbao-tls -n 
 
 Bevor du startest — 3 Dinge anpassen
 
-  1. Domain ersetzen: In values-ingress.yml und in cert-manager-cloudflare.yaml (dnsZones) deine echte öffentliche Domain statt [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) / [softxpert.de](http://softxpert.de) eintragen.
-
-  2. DNS-Record: Ein A/CNAME-Record für [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) muss in Cloudflare existieren und auf deinen Ingress/LoadBalancer zeigen — auch wenn nur intern erreichbar. (Für DNS-01 selbst ist nur
+1. Domain ersetzen: In values-ingress.yml und in cert-manager-cloudflare.yaml (dnsZones) deine echte öffentliche Domain statt [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) / [softxpert.de](http://softxpert.de) eintragen.
+2. DNS-Record: Ein A/CNAME-Record für [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) muss in Cloudflare existieren und auf deinen Ingress/LoadBalancer zeigen — auch wenn nur intern erreichbar. (Für DNS-01 selbst ist nur
 
   die Zone wichtig, aber Clients müssen den Namen ja auflösen.)
 
-  3. Erst mit Staging testen: Bei Tests letsencrypt-staging als Issuer nutzen (Let's Encrypt Prod hat strenge Rate-Limits). Wenn alles grün ist, auf letsencrypt-prod umstellen.
+1. Erst mit Staging testen: Bei Tests letsencrypt-staging als Issuer nutzen (Let's Encrypt Prod hat strenge Rate-Limits). Wenn alles grün ist, auf letsencrypt-prod umstellen.
 
   Wichtig zur Architektur
 
@@ -482,10 +440,6 @@ Bevor du startest — 3 Dinge anpassen
   meisten Setups genau richtig — sag Bescheid, falls du echtes End-to-End-TLS bis in die Pods brauchst, das ist ein deutlich größerer Umbau (Vault/OpenBao-Listener auf TLS, Cert-Verteilung an alle Pods,
 
   Backend-Scheme https am Ingress).
-
-
-
-
 
 ## Teil 4 — Auto-Unseal mit Transit
 

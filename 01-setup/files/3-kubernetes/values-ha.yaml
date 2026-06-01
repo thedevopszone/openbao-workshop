@@ -1,0 +1,9 @@
+server:
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true      # node_id je Pod automatisch setzen
+ui:
+  enabled: true            # erzeugt den Service "openbao-ui" + schaltet die UI frei
