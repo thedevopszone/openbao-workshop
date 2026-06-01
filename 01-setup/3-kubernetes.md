@@ -343,6 +343,10 @@ ui:
   enabled: true
 ```
 
+```bash
+helm upgrade openbao openbao/openbao -n openbao -f values-ingress.yml
+```
+
 OpenBao Helm Chart mit Ingress
 
 Das OpenBao-Chart ist ein Fork des Vault-Charts, die Ingress-Struktur ist identisch. values.yaml:
@@ -396,8 +400,8 @@ Zertifikat
 1. cert-manager installieren
   helm repo add jetstack [https://charts.jetstack.io](https://charts.jetstack.io)
   helm repo update
-  helm install cert-manager jetstack/cert-manager   
-    --namespace cert-manager --create-namespace   
+  helm install cert-manager jetstack/cert-manager  
+    --namespace cert-manager --create-namespace  
     --set crds.enabled=true
   Prüfen, dass die Pods laufen:
   kubectl get pods -n cert-manager
@@ -407,8 +411,8 @@ Zertifikat
     Zone → Zone → Read
     Beschränkt auf deine Zone [softxpert.de](http://softxpert.de)
     nn das Token als Secret anlegen (im selben Namespace wie OpenBao, z. B. openbao):
-    bectl create secret generic cloudflare-api-token-secret   
-    --namespace    
+    bectl create secret generic cloudflare-api-token-secret  
+    --namespace  
     --from-literal=api-token=
     inweis: Bei ClusterIssuer sucht cert-manager das API-Token-Secret standardmäßig im cert-manager-Namespace. Lege es daher entweder dort an, oder verwende einen namespace-gebundenen Issuer. Am
     einfachsten: das Secret zusätzlich im cert-manager-Namespace anlegen.
@@ -417,8 +421,8 @@ Zertifikat
     atus prüfen (sollte Ready=True werden):
     bectl get clusterissuer letsencrypt-prod -o wide
   3. Helm-Werte ausrollen
-    lm upgrade openbao openbao/openbao   
-    -n    
+    lm upgrade openbao openbao/openbao  
+    -n  
     -f values-ingress.yml
     rt-manager erkennt die Annotation [cert-manager.io/cluster-issuer](http://cert-manager.io/cluster-issuer) am Ingress, fordert das Zertifikat per DNS-01 an und legt das Secret openbao-tls an. Beobachten:
     bectl get certificate -n 
