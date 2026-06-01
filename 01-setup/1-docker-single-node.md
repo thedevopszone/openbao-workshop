@@ -1,6 +1,8 @@
 # OpenBao in Docker
 
-**Summary**: Wie man OpenBao zum Testen und Lernen mit Docker Compose startet — als schneller Dev-Mode (auto-initialisiert, auto-unsealed, fester Root-Token) oder als persistenter Single-Node-Server mit File-Storage, der echte Initialisierung, Unseal und Login durchläuft. Inklusive UI-/CLI-Login und dem Vergeben eines DNS-Namens.
+**Summary**: 
+
+Wie man OpenBao zum Testen und Lernen mit Docker Compose startet — als schneller Dev-Mode (auto-initialisiert, auto-unsealed, fester Root-Token) oder als persistenter Single-Node-Server mit File-Storage, der echte Initialisierung, Unseal und Login durchläuft. Inklusive UI-/CLI-Login und dem Vergeben eines DNS-Namens.
 
 ---
 
@@ -26,7 +28,7 @@ Es gibt zwei grundverschiedene Betriebsarten. Der Unterschied ist wichtig, weil 
 ## Voraussetzungen
 
 - Docker mit Compose-Plugin (`docker compose version`).
-- Optional die `bao`-CLI auf dem Host (`brew install openbao`). Alternativ die CLI im Container über `docker compose exec` nutzen — dann brauchst du nichts lokal zu installieren.
+- Optional die `bao`-CLI auf dem Host. Alternativ die CLI im Container über `docker compose exec` nutzen — dann brauchst du nichts lokal zu installieren.
 
 ## Das Image
 
