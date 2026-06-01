@@ -743,6 +743,8 @@ resource "vault_kv_secret_v2" "demo" {
 export VAULT_ADDR=http://127.0.0.1:18200
 export VAULT_TOKEN=<your-root/dev-token>
 
+unset VAULT_CACERT
+kubectl -n openbao port-forward svc/openbao-active 8200:8200 > /tmp/bao-pf.log 2>&1
 
 tofu init
 tofu plan
