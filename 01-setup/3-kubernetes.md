@@ -923,7 +923,7 @@ Der **Connection-User**, mit dem sich OpenBao verbindet, muss fremde Passwörter
 
 #### Schritt 2 — Erreichbarkeit: Postgres aus dem k3d-Cluster
 
-Postgres läuft per Docker Compose auf dem **Host** (Port 5432). Die OpenBao-Pods im k3d-Cluster erreichen den Host über **`host.k3d.internal`** — k3d spiegelt diesen Namen automatisch in den Cluster (extern verifiziert: `k3d.io`, host-aliases). Genau das steht als Default `postgres_host` in `database.tf`.
+Postgres läuft per Docker Compose auf dem **Host** (Port 5432). Die OpenBao-Pods im k3d-Cluster erreichen den Host über `**host.k3d.internal`** — k3d spiegelt diesen Namen automatisch in den Cluster (extern verifiziert: `k3d.io`, host-aliases). Genau das steht als Default `postgres_host` in `database.tf`.
 
 #### Schritt 3 — Engine, Connection & Static Role per OpenTofu anlegen
 
@@ -963,11 +963,26 @@ resource "vault_database_secret_backend_static_role" "app" {
 Anwenden (Port-Forward wie in Teil 5 muss laufen):
 
 ```bash
+unset VAULT_CACERT
 export VAULT_ADDR=http://127.0.0.1:8200
 export VAULT_TOKEN=<root>
 
+kubectl port-forward -n openbao svc/openbao-active 8200:8200
+
 tofu plan
 tofu apply
+
+bao read database/static-creds/app-static
+
+Nächste sinnvolle Checks, falls du weitermachen willst:
+
+  - Passwort wirklich in Postgres gesetzt? Test-Login mit dem obigen Passwort:
+  PGPASSWORD='CREd-MDstbNKQJ4GG696' psql -h localhost -U app_user -d appdb -c '\conninfo'
+  - Manuelle Rotation antesten (statt 24 h warten):
+  bao write -f database/rotate-role/app-static
+  bao read database/static-creds/app-static
+  - Danach sollte password ein anderer Wert und last_vault_rotation neuer sein.
+  - ESO/Demo-App: prüfen, dass der Secrets Operator dieses Passwort in ein K8s-Secret synct (eso-postgres.yaml / demo-app.yaml).
 ```
 
 (Ressourcen-Typen `vault_mount` (type `database`), `vault_database_secret_backend_connection` und `vault_database_secret_backend_static_role` mit `rotation_period`/`rotation_statements` extern verifiziert gegen die OpenTofu-Registry `hashicorp/vault`.)
