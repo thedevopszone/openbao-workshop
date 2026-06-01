@@ -195,13 +195,13 @@ kubectl -n openbao get pods -w
 ```bash
 kubectl -n openbao exec -ti openbao-0 -- bao operator init
 
-Unseal Key 1: <UNSEAL_KEY_1>
-Unseal Key 2: <UNSEAL_KEY_2>
-Unseal Key 3: <UNSEAL_KEY_3>
-Unseal Key 4: <UNSEAL_KEY_4>
-Unseal Key 5: <UNSEAL_KEY_5>
+Unseal Key 1: lsPn0Ieg8i5V2TaMqVr65E5IrGIfH2VTBB6ONxYuyIYF
+Unseal Key 2: fMB4Ncd5JZ0INFIrUgdvzEWlDWbA7kCvkcvrGOYcDipH
+Unseal Key 3: tCTh+MNk4hGfp+/iil1m0piHlkcsGnlBC86Y/QvL4Vqk
+Unseal Key 4: Fwty+sj52HSgK0BMCBy/NIU8mmKCmvQeiESKuLY9aUhD
+Unseal Key 5: TqYEcFMTfgMTry6Biv4/aTQLtAWYSBd2CtWuXlVPj1Nu
 
-Initial Root Token: <ROOT_TOKEN>
+Initial Root Token: s.FGRoutLJ0vf87OWaehbciaQI
 ```
 
 Du erhältst **5 Unseal-Key-Shares**, **Threshold 3** und den **Initial Root Token** ([[seal-unseal]]). **Genau einmal sichtbar — sicher notieren.** Diese Keys brauchst du gleich für *jeden* Node.
@@ -396,8 +396,8 @@ Zertifikat
 1. cert-manager installieren
   helm repo add jetstack [https://charts.jetstack.io](https://charts.jetstack.io)
   helm repo update
-  helm install cert-manager jetstack/cert-manager \
-    --namespace cert-manager --create-namespace \
+  helm install cert-manager jetstack/cert-manager   
+    --namespace cert-manager --create-namespace   
     --set crds.enabled=true
   Prüfen, dass die Pods laufen:
   kubectl get pods -n cert-manager
@@ -407,8 +407,8 @@ Zertifikat
     Zone → Zone → Read
     Beschränkt auf deine Zone [softxpert.de](http://softxpert.de)
     nn das Token als Secret anlegen (im selben Namespace wie OpenBao, z. B. openbao):
-    bectl create secret generic cloudflare-api-token-secret \
-    --namespace  \
+    bectl create secret generic cloudflare-api-token-secret   
+    --namespace    
     --from-literal=api-token=
     inweis: Bei ClusterIssuer sucht cert-manager das API-Token-Secret standardmäßig im cert-manager-Namespace. Lege es daher entweder dort an, oder verwende einen namespace-gebundenen Issuer. Am
     einfachsten: das Secret zusätzlich im cert-manager-Namespace anlegen.
@@ -417,28 +417,22 @@ Zertifikat
     atus prüfen (sollte Ready=True werden):
     bectl get clusterissuer letsencrypt-prod -o wide
   3. Helm-Werte ausrollen
-    lm upgrade openbao openbao/openbao \
-    -n  \
+    lm upgrade openbao openbao/openbao   
+    -n    
     -f values-ingress.yml
     rt-manager erkennt die Annotation [cert-manager.io/cluster-issuer](http://cert-manager.io/cluster-issuer) am Ingress, fordert das Zertifikat per DNS-01 an und legt das Secret openbao-tls an. Beobachten:
     bectl get certificate -n 
-    bectl describe certificate openbao-tls -n 
+    bectl describe certificate openbao-tls -n
 
 Bevor du startest — 3 Dinge anpassen
 
 1. Domain ersetzen: In values-ingress.yml und in cert-manager-cloudflare.yaml (dnsZones) deine echte öffentliche Domain statt [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) / [softxpert.de](http://softxpert.de) eintragen.
 2. DNS-Record: Ein A/CNAME-Record für [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) muss in Cloudflare existieren und auf deinen Ingress/LoadBalancer zeigen — auch wenn nur intern erreichbar. (Für DNS-01 selbst ist nur
-
   die Zone wichtig, aber Clients müssen den Namen ja auflösen.)
-
-1. Erst mit Staging testen: Bei Tests letsencrypt-staging als Issuer nutzen (Let's Encrypt Prod hat strenge Rate-Limits). Wenn alles grün ist, auf letsencrypt-prod umstellen.
-
+3. Erst mit Staging testen: Bei Tests letsencrypt-staging als Issuer nutzen (Let's Encrypt Prod hat strenge Rate-Limits). Wenn alles grün ist, auf letsencrypt-prod umstellen.
   Wichtig zur Architektur
-
   TLS endet weiterhin am Traefik-Ingress. Intern läuft OpenBao unverändert über HTTP (tls_disable = 1). Client→Ingress ist verschlüsselt und vertraut, Ingress→Pod ist clusterintern HTTP. Das ist für die
-
   meisten Setups genau richtig — sag Bescheid, falls du echtes End-to-End-TLS bis in die Pods brauchst, das ist ein deutlich größerer Umbau (Vault/OpenBao-Listener auf TLS, Cert-Verteilung an alle Pods,
-
   Backend-Scheme https am Ingress).
 
 ## Teil 4 — Auto-Unseal mit Transit

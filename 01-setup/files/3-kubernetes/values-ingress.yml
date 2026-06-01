@@ -1,0 +1,47 @@
+server:
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true      # node_id je Pod automatisch setzen
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable     = 1
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+
+          retry_join {
+            leader_api_addr = "http://openbao-0.openbao-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://openbao-1.openbao-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://openbao-2.openbao-internal:8200"
+          }
+        }
+
+        service_registration "kubernetes" {}
+
+  # API-Adresse muss bei tls_disable auf http stehen
+  extraEnvironmentVars:
+    BAO_ADDR: http://127.0.0.1:8200
+
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    activeService: true          # Ingress zeigt auf den aktiven (Leader-)Pod
+    hosts:
+      - host: openbao.local
+        paths: []
+    tls: []                      # kein TLS am Ingress (dev)
+
+ui:
+  enabled: true
