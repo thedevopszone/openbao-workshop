@@ -1,0 +1,63 @@
+# snapshot-cronjob.yaml — stündlicher Raft-Snapshot in Kubernetes.
+# Begleitend zu 8-operations.md.
+#
+# Der Job authentifiziert sich per kubernetes-Auth (siehe 9-agent-und-k8s-auth.md)
+# mit dem ServiceAccount "bao-snapshot" und braucht eine Rolle, die auf
+# sys/storage/raft/snapshot lesen darf:
+#
+#   bao policy write snapshot - <<'EOF'
+#   path "sys/storage/raft/snapshot" { capabilities = ["read"] }
+#   EOF
+#   bao write auth/kubernetes/role/bao-snapshot \
+#     bound_service_account_names="bao-snapshot" \
+#     bound_service_account_namespaces="openbao" \
+#     token_policies="snapshot" token_ttl=10m
+#
+# Persistente Ablage (PVC "bao-snapshots") hier vorausgesetzt; produktiv
+# besser zusätzlich off-site sichern (S3/Bucket via Sidecar oder rclone).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bao-snapshot
+  namespace: openbao
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bao-snapshot
+  namespace: openbao
+spec:
+  schedule: "0 * * * *"            # stündlich
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: bao-snapshot
+          restartPolicy: OnFailure
+          containers:
+            - name: snapshot
+              image: openbao/openbao:latest
+              env:
+                - name: VAULT_ADDR
+                  value: "http://openbao.openbao.svc:8200"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  export VAULT_TOKEN=$(bao write -field=token \
+                    auth/kubernetes/login role=bao-snapshot jwt="$JWT")
+                  STAMP=$(date +%Y-%m-%dT%H-%M-%S)
+                  bao operator raft snapshot save /snapshots/bao-$STAMP.snap
+                  # nur die letzten 24 behalten
+                  ls -1t /snapshots/bao-*.snap | tail -n +25 | xargs -r rm -f
+                  echo "snapshot bao-$STAMP.snap geschrieben"
+              volumeMounts:
+                - name: snapshots
+                  mountPath: /snapshots
+          volumes:
+            - name: snapshots
+              persistentVolumeClaim:
+                claimName: bao-snapshots

@@ -1,0 +1,82 @@
+# values-production.yaml — produktionsnähere Helm-Werte.
+# Begleitend zu 12-produktion-k8s.md.
+#
+# Baut auf dem Auto-Unseal-Setup aus 3-kubernetes.md (Teil 4) auf. Anpassen:
+# StorageClass, replicas (produktiv 5), seal-Block, Image-Tag.
+server:
+  ha:
+    enabled: true
+    replicas: 3                    # produktiv eher 5 (Failure Tolerance 2)
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable     = 1       # produktiv: TLS am Listener oder am Ingress
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+          telemetry { unauthenticated_metrics_access = true }   # nur hinter NetworkPolicy
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+          retry_join { leader_api_addr = "http://openbao-0.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-1.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-2.openbao-internal:8200" }
+        }
+
+        service_registration "kubernetes" {}
+
+        seal "transit" {
+          address    = "http://openbao-transit.transit.svc:8200"
+          mount_path = "transit/"
+          key_name   = "openbao-unseal"
+        }
+
+        telemetry {
+          prometheus_retention_time = "24h"
+          disable_hostname          = true
+        }
+
+  extraSecretEnvironmentVars:
+    - envName: VAULT_TOKEN
+      secretName: openbao-transit-token
+      secretKey: token
+
+  # Ressourcen festnageln: Memory-Limit ja, CPU-Limit NEIN (Throttling vermeiden)
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits:   { memory: 512Mi }
+
+  # nicht als root
+  statefulSet:
+    securityContext:
+      pod:       { runAsNonRoot: true, runAsUser: 100, fsGroup: 1000 }
+      container: { allowPrivilegeEscalation: false }
+
+  # eine Replica pro Node
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "vault.name" . }}
+              component: server
+          topologyKey: kubernetes.io/hostname
+
+  # persistenter Raft-Storage
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    storageClass: null             # produktiv: echte, replizierte StorageClass
+
+  readinessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+
+  priorityClassName: system-cluster-critical
+
+ui:
+  enabled: true

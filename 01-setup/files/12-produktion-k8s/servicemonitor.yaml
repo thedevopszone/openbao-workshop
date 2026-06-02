@@ -1,0 +1,23 @@
+# servicemonitor.yaml — Prometheus-Operator scrapt OpenBao-Metriken.
+# Begleitend zu 12-produktion-k8s.md.
+#
+# Voraussetzung: telemetry{} in der Server-Config (siehe values-production.yaml)
+# und Metrik-Zugriff (unauthenticated_metrics_access hinter NetworkPolicy, oder
+# Token). Das Label muss zum Prometheus-serviceMonitorSelector passen.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openbao
+  namespace: openbao
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+  endpoints:
+    - port: http
+      path: /v1/sys/metrics
+      params:
+        format: ["prometheus"]
+      interval: 30s

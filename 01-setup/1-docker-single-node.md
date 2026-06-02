@@ -136,7 +136,7 @@ api_addr = "http://127.0.0.1:8200"
 Felder (Referenz: [[configuration]]):
 
 - `ui = true` — schaltet die Web-UI auf dem Listener frei.
-- `storage "file"` — einfacher Datei-Backend, schreibt nach `/openbao/file` (im Container, extern verifiziert: Docker Hub erwartet genau diesen Pfad für das File-Plugin). `**file` kann kein HA** — für Mehrknoten/Produktion auf [[raft]] wechseln (siehe [[storage]], [[high-availability]]).
+- `storage "file"` — einfacher Datei-Backend, schreibt nach `/openbao/file` (im Container, extern verifiziert: Docker Hub erwartet genau diesen Pfad für das File-Plugin). **`file` kann kein HA** — für Mehrknoten/Produktion auf [[raft]] wechseln (siehe [[storage]], [[high-availability]]).
 - `listener "tcp"` mit `tls_disable` — bewusst nur für den lokalen Test; im DNS-Abschnitt wird TLS aktiviert.
 - `api_addr` — Adresse, unter der Clients diesen Node erreichen; landet in Redirects (wichtig hinter Reverse Proxy / [[load-balancing]]).
 
@@ -172,7 +172,7 @@ Erklärung (Container-Pfade extern verifiziert: Docker Hub):
 - `command: server -config=/openbao/config` — startet `bao server` und liest **das ganze Verzeichnis** `/openbao/config` (alle `.hcl`/`.json` alphabetisch, Referenz: [[configuration]]).
 - `./config:/openbao/config:ro` — deine Konfig read-only eingehängt.
 - Named Volume `openbao-file` → `/openbao/file` — hier liegen die verschlüsselten Daten und überleben `docker compose down`.
-- `openbao-logs` → `/openbao/logs` — für persistente [[audit]]-Logs (optional, aber empfohlen).
+- `openbao-logs` → `/openbao/logs` — für persistente [Audit](6-auth-und-policies.md)-Logs (optional, aber empfohlen).
 - `IPC_LOCK` — erlaubt `mlock`. Alternativ in der Konfig `disable_mlock = true` setzen (dann ist die Capability verzichtbar).
 
 Start:
@@ -328,9 +328,9 @@ listener "tcp" {
 ## Hardening-Hinweise (über den Test hinaus)
 
 - **Swap**: Beim Docker-Image `--memory-swappiness=0` setzen, damit Secrets nicht auf Platte ausgelagert werden (source: `raw/docs/install.md`). In Compose: `mem_swappiness: 0` auf dem Service.
-- `**mlock`**: `IPC_LOCK`-Capability geben (oben gesetzt) **oder** `disable_mlock = true` in der Konfig — nicht beides weglassen.
+- **`mlock`**: `IPC_LOCK`-Capability geben (oben gesetzt) **oder** `disable_mlock = true` in der Konfig — nicht beides weglassen.
 - **TLS**: niemals produktiv mit `tls_disable`.
 - **Storage**: `file` ist Single-Node ohne HA. Für mehr als „Testen/Lernen" auf [[raft]] und ein echtes [[deployment-vm-vs-k8s|VM-/K8s-Deployment]] gehen.
 - **Auto-Unseal**: manuelles Unseal nach jedem Restart ist im Container besonders lästig — produktiv KMS-basiertes Auto-Unseal ([[seal-unseal]]).
-- **Audit**: nach dem Login zwei [[audit]]-Devices aktivieren.
+- **Audit**: nach dem Login zwei [Audit](6-auth-und-policies.md)-Devices aktivieren.
 

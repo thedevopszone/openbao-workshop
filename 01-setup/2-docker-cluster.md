@@ -7,7 +7,7 @@
 ## Wozu ein Cluster — und wozu Docker dafür
 
 Ein einzelner OpenBao-Container ist kein HA-Setup: stirbt er, ist der Vault weg.  
-Ein **Cluster** aus mehreren Nodes mit Integrated [[raft|Raft]]-Storage löst das — die Nodes einigen sich per Konsens auf eine einzige Wahrheit und tolerieren Ausfälle (drei Nodes ⇒ ein Node darf ausfallen.
+Ein **Cluster** aus mehreren Nodes mit Integrated [[raft|Raft]]-Storage löst das — die Nodes einigen sich per Konsens auf eine einzige Wahrheit und tolerieren Ausfälle (drei Nodes ⇒ ein Node darf ausfallen).
 
 Docker Compose ist der schnellste Weg, dieses Cluster-Verhalten **lokal zum Lernen und Testen** zu erleben:  
 drei Container statt drei Maschinen, Join/Leader-Wahl/Unseal-pro-Node real durchspielen, in Minuten weggeworfen. Für echte Produktion gehört der Cluster auf getrennte VMs oder Kubernetes.   
@@ -41,7 +41,7 @@ openbao-workshop/
     └── bao-3/
 ```
 
-OpenBao wird per HCL oder JSON konfiguriert; für jeden Node schreibt man also eine eigene `bao.hcl` (source: `raw/compose-cluster.md`). Die drei Dateien unterscheiden sich nur in `**node_id**` und `**cluster_addr`/`api_addr**`.
+OpenBao wird per HCL oder JSON konfiguriert; für jeden Node schreibt man also eine eigene `bao.hcl` (source: `raw/compose-cluster.md`). Die drei Dateien unterscheiden sich nur in **`node_id`** und **`cluster_addr`**/**`api_addr`**.
 
 ## Die Node-Konfiguration
 
@@ -86,10 +86,10 @@ api_addr     = "http://bao-1:8200"
 
 Felder-Erklärung (Referenz: [[configuration]], [[raft]]):
 
-- `**storage "raft"**` mit eigenem `path` und eindeutigem `node_id` je Node. `path` zeigt auf das gemountete Daten-Volume; dort liegt die BoltDB (`raft.db`).
-- `**cluster_addr` ist bei Raft Pflicht** — der Cluster muss wissen, unter welcher Adresse die Nodes ihren mTLS-Verkehr abwickeln (source: `raw/docs/configuration/storage/raft.md`, siehe [[raft]]). Die Hostnamen `bao-1`/`bao-2`/`bao-3` sind die Docker-Service-Namen und im Compose-Netz automatisch auflösbar. `**https`** ist hier korrekt, obwohl der API-Listener `tls_disable` hat: der Cluster-Port verschlüsselt seinen Verkehr immer mit einem intern erzeugten, rotierenden Zertifikat ([[raft]]) — eine häufige Stolperfalle.
-- `**retry_join`** (eine Stanza je Kandidat) macht den Beitritt **config-basiert** statt per CLI-Befehl: jeder Node versucht beim Start automatisch, einen erreichbaren Leader zu finden (source: `raw/docs/concepts/integrated-storage/index.md`, `raw/docs/configuration/storage/raft.md`). Das ist robuster als der einmalige CLI-Join — überlebt Neustarts und Reihenfolge-Probleme. Die Vorlage zeigt den CLI-Weg (siehe unten); `retry_join` ist die empfohlene Alternative.
-- `**api_addr`** darf nicht `127.0.0.1` bleiben, sobald Peers/Clients über den Namen kommen — sonst brechen Redirects/Forwarding ([[configuration]], [[load-balancing]]).
+- **`storage "raft"`** mit eigenem `path` und eindeutigem `node_id` je Node. `path` zeigt auf das gemountete Daten-Volume; dort liegt die BoltDB (`raft.db`).
+- **`cluster_addr` ist bei Raft Pflicht** — der Cluster muss wissen, unter welcher Adresse die Nodes ihren mTLS-Verkehr abwickeln (source: `raw/docs/configuration/storage/raft.md`, siehe [[raft]]). Die Hostnamen `bao-1`/`bao-2`/`bao-3` sind die Docker-Service-Namen und im Compose-Netz automatisch auflösbar. **`https`** ist hier korrekt, obwohl der API-Listener `tls_disable` hat: der Cluster-Port verschlüsselt seinen Verkehr immer mit einem intern erzeugten, rotierenden Zertifikat ([[raft]]) — eine häufige Stolperfalle.
+- **`retry_join`** (eine Stanza je Kandidat) macht den Beitritt **config-basiert** statt per CLI-Befehl: jeder Node versucht beim Start automatisch, einen erreichbaren Leader zu finden (source: `raw/docs/concepts/integrated-storage/index.md`, `raw/docs/configuration/storage/raft.md`). Das ist robuster als der einmalige CLI-Join — überlebt Neustarts und Reihenfolge-Probleme. Die Vorlage zeigt den CLI-Weg (siehe unten); `retry_join` ist die empfohlene Alternative.
+- **`api_addr`** darf nicht `127.0.0.1` bleiben, sobald Peers/Clients über den Namen kommen — sonst brechen Redirects/Forwarding ([[configuration]], [[load-balancing]]).
 
 ## Die Compose-Datei
 
@@ -139,10 +139,10 @@ services:
 
 Erklärung (Container-Pfade extern verifiziert, siehe [[docker]]):
 
-- `**command: server -config=…**` startet `bao server` mit der gemounteten Konfig (Referenz: [[commands-cli]]).
+- **`command: server -config=…`** startet `bao server` mit der gemounteten Konfig (Referenz: [[commands-cli]]).
 - Jeder Service mountet **seine eigene** `bao-N.hcl` read-only nach `/openbao/config/bao.hcl` und **sein eigenes** Daten-Verzeichnis nach `/openbao/data`.
 - **Kein eigenes Netzwerk nötig**: Compose legt automatisch ein Default-Netz an, in dem sich die Services per Name (`bao-1`, `bao-2`, `bao-3`) erreichen — genau das, was `cluster_addr`/`retry_join` brauchen.
-- `**IPC_LOCK`** erlaubt `mlock` (Secrets nicht auf Platte auslagern); alternativ `disable_mlock = true` in der Konfig (siehe Hardening in [[docker]]).
+- **`IPC_LOCK`** erlaubt `mlock` (Secrets nicht auf Platte auslagern); alternativ `disable_mlock = true` in der Konfig (siehe Hardening in [[docker]]).
 - Der **Cluster-Port 8201** wird *nicht* nach außen gemappt — er wird nur containerintern zwischen den Nodes gebraucht.
 
 ## Lokaler Start
@@ -236,7 +236,7 @@ docker compose exec bao-1 bao operator raft list-peers
 docker compose exec bao-1 bao status
 ```
 
-`list-peers` sollte alle drei Nodes als `**voter**` zeigen (source: `raw/compose-cluster.md`, Referenz [[raft]]):
+`list-peers` sollte alle drei Nodes als **`voter`** zeigen (source: `raw/compose-cluster.md`, Referenz [[raft]]):
 
 ```text
 Node     Address       State       Voter
@@ -272,7 +272,7 @@ bao login <Initial-Root-Token>
 bao operator raft list-peers
 ```
 
-> Den Root-Token nur fürs initiale Setup nutzen, danach reguläre [[auth|Auth-Methoden]] + [[policies]] einrichten und mit eingeschränkten [[tokens]] arbeiten.
+> Den Root-Token nur fürs initiale Setup nutzen, danach reguläre [Auth-Methoden, Policies und Tokens](6-auth-und-policies.md) einrichten und mit eingeschränkten Tokens arbeiten.
 
 ## Ausfall ausprobieren (das Lern-Highlight)
 
@@ -312,6 +312,6 @@ Was dieses Compose-Setup **bewusst weglässt** und produktiv unverzichtbar ist:
 - **Auto-Unseal** — manuelles Unseal pro Node nach jedem Restart ist operativ untragbar; produktiv KMS/HSM/Transit ([[seal-unseal]]).
 - **Load Balancer** — eine stabile Adresse vor dem Cluster, der auf den aktiven Node zeigt (`/v1/sys/health`), siehe [[load-balancing]].
 - **5 statt 3 Nodes** — die Reference-Architecture empfiehlt 5 Voter (Failure Tolerance 2), siehe [[raft]] Level 4.
-- **Backups** — Snapshots regelmäßig sichern, Restore üben ([[backups]], [[raft]] Level 5).
-- **Audit** — nach dem Login zwei [[audit]]-Devices aktivieren.
+- **Backups** — Snapshots regelmäßig sichern, Restore üben ([Backup & Restore](8-operations.md)).
+- **Audit** — nach dem Login zwei [Audit](6-auth-und-policies.md)-Devices aktivieren.
 

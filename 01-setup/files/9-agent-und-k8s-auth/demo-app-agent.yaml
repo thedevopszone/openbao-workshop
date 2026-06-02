@@ -1,0 +1,69 @@
+# demo-app-agent.yaml — Pod mit OpenBao-Agent-Sidecar.
+# Begleitend zu 9-agent-und-k8s-auth.md.
+#
+# Der Agent (Sidecar) authentifiziert sich per ServiceAccount, rendert das
+# Secret nach /vault/secrets/config.env (tmpfs), die App liest nur die Datei.
+# Kein statischer Token im Cluster nötig.
+#
+# Reihenfolge:
+#   1) ./setup-k8s-auth.sh           (kubernetes-Auth + Rolle demo-app)
+#   2) kubectl apply -f agent-configmap.yaml
+#   3) kubectl apply -f demo-app-agent.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-app
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: default
+  labels: { app: demo-app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: demo-app }
+  template:
+    metadata:
+      labels: { app: demo-app }
+    spec:
+      serviceAccountName: demo-app        # Identität für kubernetes-Auth
+      containers:
+        # --- die eigentliche Anwendung: liest nur die gerenderte Datei ---
+        - name: app
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "warte auf gerendertes Secret ..."
+              until [ -f /vault/secrets/config.env ]; do sleep 1; done
+              while true; do
+                echo "[app] $(cat /vault/secrets/config.env)"
+                sleep 30
+              done
+          volumeMounts:
+            - name: secrets
+              mountPath: /vault/secrets
+              readOnly: true
+
+        # --- Sidecar: OpenBao Agent (Auto-Auth + Templating) ---
+        - name: bao-agent
+          image: openbao/openbao:latest
+          args: ["agent", "-config=/etc/bao/agent.hcl"]
+          volumeMounts:
+            - name: secrets
+              mountPath: /vault/secrets
+            - name: agent-conf
+              mountPath: /etc/bao
+              readOnly: true
+
+      volumes:
+        # Secrets nur im RAM (tmpfs), nichts auf der Node-Platte
+        - name: secrets
+          emptyDir:
+            medium: Memory
+        - name: agent-conf
+          configMap:
+            name: bao-agent-config

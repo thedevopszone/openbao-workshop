@@ -1,0 +1,44 @@
+# injector-deployment.yaml — Pod mit Agent Injector (auto-Sidecar per Annotation).
+# Begleitend zu 10-secrets-in-pods.md.
+#
+# Voraussetzung:
+#   - Injector aktiv:  helm upgrade openbao openbao/openbao -n openbao \
+#                        --reuse-values --set injector.enabled=true
+#   - kubernetes-Auth-Rolle "demo-app" + ServiceAccount "demo-app"
+#     (siehe files/9-agent-und-k8s-auth/)
+#
+# Annotationspräfix vault.hashicorp.com/ — das OpenBao-Chart ist ein Vault-Fork;
+# gegen eure Chart-Version verifizieren.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-app
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: web }
+  template:
+    metadata:
+      labels: { app: web }
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "demo-app"
+        vault.hashicorp.com/agent-inject-status: "update"   # re-render bei Änderung
+        vault.hashicorp.com/agent-inject-secret-config: "kv/data/workshop/hello"
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "kv/data/workshop/hello" -}}
+          APP_MESSAGE={{ .Data.data.message }}
+          {{- end -}}
+    spec:
+      serviceAccountName: demo-app
+      containers:
+        - name: web
+          image: busybox:1.36
+          command: ["/bin/sh", "-c", "cat /vault/secrets/config; sleep 3600"]

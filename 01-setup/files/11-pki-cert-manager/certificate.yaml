@@ -1,0 +1,20 @@
+# certificate.yaml — Zertifikat aus OpenBao-PKI, von cert-manager verwaltet.
+# Begleitend zu 11-pki-cert-manager.md.
+#
+# cert-manager fordert es bei OpenBao an, legt es als Secret web-tls ab
+# und erneuert es vor Ablauf automatisch (renewBefore).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: web-tls
+  namespace: default
+spec:
+  secretName: web-tls               # erzeugtes K8s-Secret (tls.crt/tls.key)
+  duration: 24h
+  renewBefore: 8h
+  commonName: app.workshop.local
+  dnsNames:
+    - app.workshop.local
+  issuerRef:
+    name: openbao-pki
+    kind: ClusterIssuer

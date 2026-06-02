@@ -1,0 +1,32 @@
+# networkpolicy.yaml — Zugriff auf OpenBao abriegeln.
+# Begleitend zu 12-produktion-k8s.md.
+#
+# API (8200) nur aus Namespaces mit Label openbao-access=true,
+# Cluster-Port (8201) nur zwischen OpenBao-Pods.
+#
+# Erlauben:  kubectl label ns <app-ns> openbao-access=true
+# Wirkt nur, wenn die CNI NetworkPolicies umsetzt (k3d/Flannel: eingeschränkt;
+# produktiv Calico/Cilium).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              openbao-access: "true"
+      ports:
+        - { protocol: TCP, port: 8200 }
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+      ports:
+        - { protocol: TCP, port: 8201 }

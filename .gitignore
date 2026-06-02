@@ -1,3 +1,9 @@
 # Local Claude Code settings (machine-specific, may contain absolute paths)
 .claude/settings.local.json
 .claude/
+
+# Terraform/OpenTofu lokale Artefakte (State kann Secrets enthalten)
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*

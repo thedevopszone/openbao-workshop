@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenBao (HSM/PKCS#11 Auto-Unseal)
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+User=openbao
+Group=openbao
+# Entscheidend: ohne SOFTHSM2_CONF findet der Dienst den Token-Store nicht.
+Environment=SOFTHSM2_CONF=/opt/openbao/softhsm/softhsm2.conf
+ExecStart=/usr/local/bin/bao-hsm server -config=/opt/openbao/config/config.hcl
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

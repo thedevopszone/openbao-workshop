@@ -41,7 +41,7 @@ Jede:r Teilnehmer:in baut auf dem **eigenen Laptop** denselben Stack und durchl�
 
 ## Teil 0 — Werkzeuge installieren
 
-Gebraucht werden: **Docker**, **k3d**, **kubectl**, **helm**, die `**bao`-CLI** und **OpenTofu**. (Alle Installationswege extern verifiziert am 2026-05-29.)
+Gebraucht werden: **Docker**, **k3d**, **kubectl**, **helm**, die **`bao`-CLI** und **OpenTofu**. (Alle Installationswege extern verifiziert am 2026-05-29.)
 
 ### macOS (Homebrew)
 
@@ -104,7 +104,7 @@ tofu version
 bao version
 ```
 
-> **CLI-Falle (gilt überall):** Die `bao`-CLI verbindet sich über `**VAULT_ADDR`/`VAULT_TOKEN`**, nicht über `BAO_ADDR`/`BAO_TOKEN` (Vault-Kompatibilität, extern verifiziert: `openbao.org/docs/commands`). Ausführlich erklärt in [[docker]] (Gotcha gemischte Präfixe). Wir nutzen daher durchgehend `VAULT_`*.
+> **CLI-Falle (gilt überall):** Die `bao`-CLI verbindet sich über **`VAULT_ADDR`**/**`VAULT_TOKEN`**, nicht über `BAO_ADDR`/`BAO_TOKEN` (Vault-Kompatibilität, extern verifiziert: `openbao.org/docs/commands`). Ausführlich erklärt in [[docker]] (Gotcha gemischte Präfixe). Wir nutzen daher durchgehend `VAULT_`*.
 
 ---
 
@@ -125,7 +125,7 @@ kubectl get nodes
 kubectl get storageclass
 ```
 
-Erwartet: drei Nodes `Ready` und eine Default-StorageClass `**local-path**` (k3s bringt den local-path-Provisioner mit — die Raft-PVCs binden damit out-of-the-box).
+Erwartet: drei Nodes `Ready` und eine Default-StorageClass **`local-path`** (k3s bringt den local-path-Provisioner mit — die Raft-PVCs binden damit out-of-the-box).
 
 > k3d setzt automatisch den kubectl-Kontext auf den neuen Cluster. Falls nicht: `kubectl config use-context k3d-openbao`.
 
@@ -277,23 +277,31 @@ kubectl -n openbao exec -ti openbao-0 -- bao operator unseal   # 3×
 
 > **Das ist der Aha-Moment für Auto-Unseal:** Jeder Pod-Neustart erzwingt manuelles Unseal. In Kubernetes ist das untragbar — deshalb Teil 4.
 >
-> Fällt ein **zweiter** Node aus, ist das Quorum verloren und der Cluster nimmt keine Schreibvorgänge mehr an (Raft ist CP — Konsistenz vor Verfügbarkeit.
+> Fällt ein **zweiter** Node aus, ist das Quorum verloren und der Cluster nimmt keine Schreibvorgänge mehr an (Raft ist CP — Konsistenz vor Verfügbarkeit).
 
 ---
 
-## Teil 4 — Ingress
+## Ingress (optional)
 
-k3d Cluster starten
+> Nicht Teil des Kern-Ablaufs (Teile 0–6). Dieser Abschnitt zeigt, wie man die OpenBao-UI über einen **Traefik-Ingress** statt per `port-forward` erreichbar macht — erst ohne, dann mit TLS per cert-manager.
+
+### Voraussetzung: LB-Ports
+
+Der k3d-Cluster aus Teil 1 wurde bereits mit gemappten LoadBalancer-Ports `80`/`443` erstellt. Fehlen sie, lassen sie sich nachträglich ergänzen:
 
 ```bash
-k3d cluster create openbao --servers 1 --agents 2 \
-    --port "80:80@loadbalancer" \
-    --port "443:443@loadbalancer"
+k3d cluster edit openbao \
+  --port-add "80:80@loadbalancer" \
+  --port-add "443:443@loadbalancer"
 ```
 
- values-ingress.yml
+> ⚠️ Das rekreiert den `serverlb`-Container (kurze LB-Unterbrechung, auch der API-Port wird neu gebunden). Die k3s-Nodes/Daten bleiben unangetastet. Ist Port 80/443 auf dem Host belegt, stattdessen z. B. `8080:80`/`8443:443` nehmen.
 
-```bash
+### Variante A — Ingress ohne TLS (dev)
+
+`values-ingress.yml` — wie `values-ha.yaml`, zusätzlich der `ingress`-Block:
+
+```yaml
 server:
   ha:
     enabled: true
@@ -313,15 +321,9 @@ server:
         storage "raft" {
           path = "/openbao/data"
 
-          retry_join {
-            leader_api_addr = "http://openbao-0.openbao-internal:8200"
-          }
-          retry_join {
-            leader_api_addr = "http://openbao-1.openbao-internal:8200"
-          }
-          retry_join {
-            leader_api_addr = "http://openbao-2.openbao-internal:8200"
-          }
+          retry_join { leader_api_addr = "http://openbao-0.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-1.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-2.openbao-internal:8200" }
         }
 
         service_registration "kubernetes" {}
@@ -343,101 +345,118 @@ ui:
   enabled: true
 ```
 
+Ausrollen:
+
 ```bash
 helm upgrade openbao openbao/openbao -n openbao -f values-ingress.yml
 ```
 
-OpenBao Helm Chart mit Ingress
+Löst `openbao.local` nicht automatisch auf `127.0.0.1` auf, in `/etc/hosts` ergänzen:
 
-Das OpenBao-Chart ist ein Fork des Vault-Charts, die Ingress-Struktur ist identisch. values.yaml:
-
-  server:
-
-```
-# Für lokales Testen ohne TLS/Storage – dev mode
-
-dev:
-
-  enabled: true
-
-ingress:
-
-  enabled: true
-
-  ingressClassName: traefik
-
-  # Traefik annotations bei Bedarf, z.B. für websocket/timeout
-
-  annotations: {}
-
-  hosts:
-
-    - host: bao.[localhost](http://localhost)
-
-      paths:
-
-        - /
-
-  # für lokales http kein tls-Block nötig
-
-  tls: []
-
-# OpenBao API lauscht auf 8200 – das Chart setzt das Service-Target passen
+```bash
+echo "127.0.0.1 openbao.local" | sudo tee -a /etc/hosts
 ```
 
-export VAULT_ADDR=[http://bao.localhost:8080](http://bao.localhost:8080)
+Test:
 
-  curl $VAULT_ADDR/v1/sys/health
+```bash
+export VAULT_ADDR=http://openbao.local
+curl $VAULT_ADDR/v1/sys/health
+# oder UI im Browser: http://openbao.local/ui
+```
 
-# oder UI im Browser: [http://bao.localhost:8080/ui](http://bao.localhost:8080/ui)
+### Variante B — TLS am Ingress (cert-manager + Cloudflare DNS-01)
 
-  Falls bao.[localhost](http://localhost) nicht automatisch auf 127.0.0.1 auflöst, in /etc/hosts ergänzen:
+Für ein echtes Zertifikat von Let's Encrypt per **DNS-01-Challenge** über Cloudflare.
 
-  127.0.0.1 bao.[localhost](http://localhost)
+**1. cert-manager installieren:**
 
-Zertifikat
+```bash
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager --create-namespace \
+  --set crds.enabled=true
 
-1. cert-manager installieren
-  helm repo add jetstack [https://charts.jetstack.io](https://charts.jetstack.io)
-  helm repo update
-  helm install cert-manager jetstack/cert-manager  
-    --namespace cert-manager --create-namespace  
-    --set crds.enabled=true
-  Prüfen, dass die Pods laufen:
-  kubectl get pods -n cert-manager
-  1. Cloudflare API-Token erstellen
-    Cloudflare-Dashboard → My Profile → API Tokens → Create Token. Nutze die Vorlage „Edit zone DNS" mit diesen Rechten:
-    Zone → DNS → Edit
-    Zone → Zone → Read
-    Beschränkt auf deine Zone [softxpert.de](http://softxpert.de)
-    nn das Token als Secret anlegen (im selben Namespace wie OpenBao, z. B. openbao):
-    bectl create secret generic cloudflare-api-token-secret  
-    --namespace  
-    --from-literal=api-token=
-    inweis: Bei ClusterIssuer sucht cert-manager das API-Token-Secret standardmäßig im cert-manager-Namespace. Lege es daher entweder dort an, oder verwende einen namespace-gebundenen Issuer. Am
-    einfachsten: das Secret zusätzlich im cert-manager-Namespace anlegen.
-  2. ClusterIssuer anwenden
-    bectl apply -f cert-manager-cloudflare.yaml
-    atus prüfen (sollte Ready=True werden):
-    bectl get clusterissuer letsencrypt-prod -o wide
-  3. Helm-Werte ausrollen
-    lm upgrade openbao openbao/openbao  
-    -n  
-    -f values-ingress.yml
-    rt-manager erkennt die Annotation [cert-manager.io/cluster-issuer](http://cert-manager.io/cluster-issuer) am Ingress, fordert das Zertifikat per DNS-01 an und legt das Secret openbao-tls an. Beobachten:
-    bectl get certificate -n 
-    bectl describe certificate openbao-tls -n
+kubectl get pods -n cert-manager   # alle Ready?
+```
 
-Bevor du startest — 3 Dinge anpassen
+**2. Cloudflare API-Token erstellen** (Dashboard → My Profile → API Tokens → Create Token, Vorlage „Edit zone DNS"):
 
-1. Domain ersetzen: In values-ingress.yml und in cert-manager-cloudflare.yaml (dnsZones) deine echte öffentliche Domain statt [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) / [softxpert.de](http://softxpert.de) eintragen.
-2. DNS-Record: Ein A/CNAME-Record für [openbao.intern.softxpert.de](http://openbao.intern.softxpert.de) muss in Cloudflare existieren und auf deinen Ingress/LoadBalancer zeigen — auch wenn nur intern erreichbar. (Für DNS-01 selbst ist nur
-  die Zone wichtig, aber Clients müssen den Namen ja auflösen.)
-3. Erst mit Staging testen: Bei Tests letsencrypt-staging als Issuer nutzen (Let's Encrypt Prod hat strenge Rate-Limits). Wenn alles grün ist, auf letsencrypt-prod umstellen.
-  Wichtig zur Architektur
-  TLS endet weiterhin am Traefik-Ingress. Intern läuft OpenBao unverändert über HTTP (tls_disable = 1). Client→Ingress ist verschlüsselt und vertraut, Ingress→Pod ist clusterintern HTTP. Das ist für die
-  meisten Setups genau richtig — sag Bescheid, falls du echtes End-to-End-TLS bis in die Pods brauchst, das ist ein deutlich größerer Umbau (Vault/OpenBao-Listener auf TLS, Cert-Verteilung an alle Pods,
-  Backend-Scheme https am Ingress).
+- `Zone → DNS → Edit`
+- `Zone → Zone → Read`
+- beschränkt auf deine Zone (z. B. `softxpert.de`)
+
+Token als Secret anlegen — cert-manager sucht es bei einem `ClusterIssuer` standardmäßig im **`cert-manager`-Namespace**:
+
+```bash
+kubectl create secret generic cloudflare-api-token-secret \
+  --namespace cert-manager \
+  --from-literal=api-token=<DEIN_TOKEN>
+```
+
+**3. ClusterIssuer anlegen** (`cert-manager-cloudflare.yaml`):
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token-secret
+              key: api-token
+        selector:
+          dnsZones:
+            - "softxpert.de"
+```
+
+```bash
+kubectl apply -f cert-manager-cloudflare.yaml
+kubectl get clusterissuer letsencrypt-prod -o wide   # Ready=True?
+```
+
+**4. Ingress mit TLS** — in `values-ingress.yml` den `ingress`-Block erweitern:
+
+```yaml
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    activeService: true
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: openbao.intern.softxpert.de
+        paths: []
+    tls:
+      - secretName: openbao-tls
+        hosts:
+          - openbao.intern.softxpert.de
+```
+
+```bash
+helm upgrade openbao openbao/openbao -n openbao -f values-ingress.yml
+
+# cert-manager fordert das Zertifikat per DNS-01 an und legt openbao-tls an:
+kubectl get certificate -n openbao
+kubectl describe certificate openbao-tls -n openbao
+```
+
+#### Bevor du startest — 3 Dinge anpassen
+
+1. **Domain ersetzen:** in `values-ingress.yml` und in `cert-manager-cloudflare.yaml` (`dnsZones`) deine echte öffentliche Domain statt `openbao.intern.softxpert.de` / `softxpert.de` eintragen.
+2. **DNS-Record:** ein A/CNAME-Record für deinen Host muss in Cloudflare existieren und auf den Ingress/LoadBalancer zeigen — Clients müssen den Namen auflösen können.
+3. **Erst mit Staging testen:** zunächst `letsencrypt-staging` als Issuer nutzen (Prod hat strenge Rate-Limits); wenn alles grün ist, auf `letsencrypt-prod` umstellen.
+
+> **Architektur:** TLS endet am Traefik-Ingress. Intern läuft OpenBao unverändert über HTTP (`tls_disable = 1`): Client→Ingress ist verschlüsselt, Ingress→Pod ist clusterintern HTTP. Für die meisten Setups genau richtig. Echtes End-to-End-TLS bis in die Pods ist ein deutlich größerer Umbau (OpenBao-Listener auf TLS, Cert-Verteilung an alle Pods, Backend-Scheme `https` am Ingress).
 
 ## Teil 4 — Auto-Unseal mit Transit
 
@@ -563,8 +582,8 @@ ui:
 
 Zwei Erweiterungen gegenüber Teil 2 (beide aus den verifizierten Quellen):
 
-- `**retry_join**` je Node — die Follower **joinen jetzt automatisch** beim Start (Muster aus [[k8s-ha-setup]] TLS-Beispiel / [[compose-cluster]]). Kein manuelles `raft join` mehr.
-- `**seal "transit"`** mit `address`/`mount_path`/`key_name`; der **Token** kommt über die Umgebungsvariable `**VAULT_TOKEN`** (vom Transit-Seal als Auth genutzt — extern verifiziert: `openbao.org/docs/configuration/seal/transit`).
+- **`retry_join`** je Node — die Follower **joinen jetzt automatisch** beim Start (Muster aus [[k8s-ha-setup]] TLS-Beispiel / [[compose-cluster]]). Kein manuelles `raft join` mehr.
+- **`seal "transit"`** mit `address`/`mount_path`/`key_name`; der **Token** kommt über die Umgebungsvariable **`VAULT_TOKEN`** (vom Transit-Seal als Auth genutzt — extern verifiziert: `openbao.org/docs/configuration/seal/transit`).
 
 Deployen:
 
@@ -604,7 +623,7 @@ Das ist der Kontrast zu Teil 3 — genau das macht Auto-Unseal in Kubernetes pra
 
 ## Teil 5 — Konfiguration mit OpenTofu
 
-OpenBao ist **API-kompatibel zu Vault**, daher konfiguriert man es mit dem Standard-Provider `**hashicorp/vault`** — kein eigener Provider nötig (extern verifiziert; ein dedizierter OpenBao-Provider ist in Diskussion, aber `hashicorp/vault` ist der dokumentierte Weg). Wir richten eine KV-Engine, eine Policy, die **userpass**-Auth-Methode und einen **Benutzer** ein, damit sich Teilnehmer:innen gleich einloggen können.
+OpenBao ist **API-kompatibel zu Vault**, daher konfiguriert man es mit dem Standard-Provider **`hashicorp/vault`** — kein eigener Provider nötig (extern verifiziert; ein dedizierter OpenBao-Provider ist in Diskussion, aber `hashicorp/vault` ist der dokumentierte Weg). Wir richten eine KV-Engine, eine Policy, die **userpass**-Auth-Methode und einen **Benutzer** ein, damit sich Teilnehmer:innen gleich einloggen können.
 
 ### 5.1 Zugang per Port-Forward öffnen
 
@@ -626,50 +645,45 @@ export VAULT_ADDR="http://127.0.0.1:8200"
 export VAULT_TOKEN="<Initial Root Token aus 4.5>"
 ```
 
-DNS
+### 5.1b Alternative: Zugang per Ingress (statt Port-Forward)
 
-Es sind also zwei Schritte nötig: (1) Host-Port zu Traefik durchreichen, (2) Ingress-Objekt anlegen.
+Statt `port-forward` kann die UI dauerhaft über einen Ingress erreichbar sein — praktisch auf einer VM. Voraussetzung sind die LB-Ports 80/443 (siehe Abschnitt „Ingress (optional)"):
 
 ```bash
-Schritt 1 — Host-Port zu Traefik durchreichen
+k3d cluster edit openbao \
+  --port-add "80:80@loadbalancer" \
+  --port-add "443:443@loadbalancer"
+```
 
-  k3d kann den LoadBalancer eines bestehenden Clusters um Ports erweitern:
+> ⚠️ Rekreiert den `serverlb`-Container (kurze LB-Unterbrechung, auch der API-Port wird neu gebunden). Ist Port 80/443 auf der VM belegt, z. B. `8080:80`/`8443:443` nehmen.
 
-  k3d cluster edit openbao \
-    --port-add "80:80@loadbalancer" \
-    --port-add "443:443@loadbalancer"
+Ingress-Objekt für die UI — `nip.io` löst den Hostnamen automatisch auf die VM-IP auf:
 
-  ⚠️ Das rekreiert den serverlb-Container (kurze Unterbrechung des LB, auch der API-Port wird neu gebunden). Die k3s-Nodes/Daten bleiben unangetastet. Falls Port 80/443 auf der VM schon belegt ist, nehmen
-  wir stattdessen z.B. 8080:80 / 8443:443.
+```yaml
+# openbao-ui-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openbao-ui
+  namespace: openbao
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: openbao.172.16.0.13.nip.io   # VM-IP einsetzen
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: openbao-ui
+                port:
+                  number: 8200
+```
 
-  Schritt 2 — Ingress für die GUI
-
-  # openbao-ui-ingress.yaml
-  apiVersion: networking.k8s.io/v1
-  kind: Ingress
-  metadata:
-    name: openbao-ui
-    namespace: openbao
-  spec:
-    ingressClassName: traefik
-    rules:
-      - host: openbao.172.16.0.13.nip.io   # nip.io löst automatisch auf die VM-IP auf
-        http:
-          paths:
-            - path: /
-              pathType: Prefix
-              backend:
-                service:
-                  name: openbao-ui
-                  port:
-                    number: 8200
-
-  
-
-
+```bash
 kubectl apply -f openbao-ui-ingress.yaml
-
-Danach erreichbar unter http://openbao.172.16.0.13.nip.io/.
+# danach erreichbar unter http://openbao.172.16.0.13.nip.io/
 ```
 
 ### 5.2 OpenTofu-Projekt
@@ -740,7 +754,7 @@ resource "vault_kv_secret_v2" "demo" {
 ```bash
 
 #export VAULT_ADDR=http://127.0.0.1:8200
-export VAULT_ADDR=http://127.0.0.1:18200
+export VAULT_ADDR=http://127.0.0.1:8200
 export VAULT_TOKEN=<your-root/dev-token>
 
 unset VAULT_CACERT
@@ -752,7 +766,7 @@ tofu apply
 
 
 
-Apply complete — 5 added, 0 changed, 0 destroyed, against the k3d cluster (127.0.0.1:18200), not the dev server.
+Apply complete — 5 added, 0 changed, 0 destroyed, against the k3d cluster (127.0.0.1:8200), not the dev server.
 
   Created:
   - vault_mount.kv — KV-v2 store at kv/ ("Workshop KV store")
@@ -765,8 +779,7 @@ Apply complete — 5 added, 0 changed, 0 destroyed, against the k3d cluster (127
 Prüfen:
 
 ```bash
-BAO_ADDR="$VAULT_ADDR" BAO_TOKEN="$VAULT_TOKEN"
-
+# VAULT_ADDR / VAULT_TOKEN sind bereits gesetzt (siehe oben)
 bao secrets list
 bao kv get kv/workshop/hello
 bao auth list
@@ -785,12 +798,12 @@ http://openbao.172.16.0.13.nip.io/
 - **Als Admin:** Methode **Token**, den Initial Root Token eintragen.
 - **Als Workshop-User:** Methode **Username** (userpass), Benutzer `workshop`, Passwort `workshop123` (aus OpenTofu). Diese:r User sieht laut Policy nur `kv/workshop/`*.
 
-> Den Root-Token nur fürs Setup nutzen; danach mit der userpass-Identität und [[policies|Policies]] arbeiten.
+> Den Root-Token nur fürs Setup nutzen; danach mit der userpass-Identität und [Policies](6-auth-und-policies.md) arbeiten.
 
 ### CLI verbinden
 
 ```bash
-export VAULT_ADDR="http://127.0.0.1:18200"
+export VAULT_ADDR="http://127.0.0.1:8200"
 
 # als Workshop-User einloggen
 bao login -method=userpass username=workshop
@@ -799,7 +812,7 @@ bao login -method=userpass username=workshop
 # Ausloggen
 bao token revoke -self
 
-export VAULT_ADDR=http://127.0.0.1:18200
+export VAULT_ADDR=http://127.0.0.1:8200
 export VAULT_TOKEN=$(bao login -method=userpass -token-only username=workshop password=workshop123)
 
 bao kv get kv/workshop/hello      # erlaubt
@@ -815,29 +828,26 @@ Der Token landet nach dem Login in `~/.vault-token`; weitere `bao`-Befehle finde
 
 Da der Cluster Auto-Unseal über transit nutzt, gibt es statt Unseal-Keys Recovery-Keys (3 von 5). Damit lässt sich ein neuer Root-Token erzeugen:
 
-```
-???
+> Hintergrund: OpenBao **v2.5.4** hat die `generate-root`-Endpoints standardmäßig deaktiviert (seit v2.5.3, Listener-Parameter `disable_unauthed_generate_root_endpoints = true`). Ohne Anpassung kommt `405 unsupported operation`.
 
-Was nötig war (und warum es nicht direkt ging): OpenBao v2.5.4 hat die generate-root-Endpoints standardmäßig deaktiviert (seit v2.5.3, Listener-Parameter disable_unauthed_generate_root_endpoints = true).
-  Deshalb kam anfangs 405 unsupported operation. Ablauf:
+Ablauf, um trotzdem einen neuen Root-Token zu erzeugen:
 
-  1. ConfigMap openbao-config temporär gepatcht → disable_unauthed_generate_root_endpoints = false im listener "tcp"-Block
-  2. Rolling-Restart der 3 Raft-Pods (Standbys zuerst, aktiver zuletzt; Transit-Auto-Unseal hat sie automatisch entsiegelt)
-  3. generate-root: init mit OTP → deine 3 Recovery-Keys (Threshold 3/5) eingegeben → encoded Token mit OTP dekodiert
-  4. Config wieder zurückgesetzt und erneut durchgerollt → Endpoint ist wieder gesperrt (405 bestätigt)
+1. ConfigMap `openbao-config` temporär patchen → `disable_unauthed_generate_root_endpoints = false` im `listener "tcp"`-Block.
+2. Rolling-Restart der 3 Raft-Pods (Standbys zuerst, aktiver zuletzt; Transit-Auto-Unseal entsiegelt sie automatisch).
+3. `bao operator generate-root`: init mit OTP → die 3 Recovery-Keys (Threshold 3/5) eingeben → encoded Token mit OTP dekodieren.
+4. Config zurücksetzen und erneut durchrollen → Endpoint ist wieder gesperrt (405 bestätigt).
 
-  Hinweise:
-  - Der vorherige Root-Token (auth/token/root/h9…) war um 04:50 Uhr revoked worden — daher war keiner mehr verfügbar.
-  - ⚠️ Die ConfigMap-Änderung war ein direkter kubectl-Patch, kein Helm-Update. Der nächste helm upgrade überschreibt sie ohnehin mit dem (sicheren) Default — kein Drift-Risiko in die unsichere Richtung.
-  - Empfehlung für den Workshop: aus diesem Root-Token einen kurzlebigen Token oder einen mit minimaler Policy ableiten und den Root-Token danach wieder revoken.
+> **Hinweise:**
+> - Die ConfigMap-Änderung ist ein direkter `kubectl`-Patch, kein Helm-Update — der nächste `helm upgrade` überschreibt sie ohnehin mit dem sicheren Default (kein Drift in die unsichere Richtung).
+> - Empfehlung: aus dem neuen Root-Token einen kurzlebigen oder minimal berechtigten Token ableiten und den Root-Token danach wieder `revoke`n.
+>
+> Quellen: Seal/Unseal – Recovery Keys · tcp listener (`disable_unauthed_generate_root_endpoints`) · `operator generate-root`.
 
-  Sources: Seal/Unseal – Recovery Keys · tcp listener (disable_unauthed_generate_root_endpoints) · operator generate-root
-  
-```
+## PostgreSQL mit rotierendem Passwort
 
-## Postgresql mit rotierenen Passwort
+`files/3-kubernetes/postgres/docker-compose.yml`:
 
-```bash
+```yaml
 services:
   postgres:
     image: postgres:16
@@ -919,11 +929,11 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 \q
 ```
 
-Der **Connection-User**, mit dem sich OpenBao verbindet, muss fremde Passwörter ändern dürfen. Für den Workshop nehmen wir den `postgres`-Superuser aus der [docker-compose](#postgresql-mit-rotierenen-passwort) oben; produktiv ein dedizierter Rotations-User mit minimalen Rechten.
+Der **Connection-User**, mit dem sich OpenBao verbindet, muss fremde Passwörter ändern dürfen. Für den Workshop nehmen wir den `postgres`-Superuser aus der [docker-compose](#postgresql-mit-rotierendem-passwort) oben; produktiv ein dedizierter Rotations-User mit minimalen Rechten.
 
 #### Schritt 2 — Erreichbarkeit: Postgres aus dem k3d-Cluster
 
-Postgres läuft per Docker Compose auf dem **Host** (Port 5432). Die OpenBao-Pods im k3d-Cluster erreichen den Host über `**host.k3d.internal`** — k3d spiegelt diesen Namen automatisch in den Cluster (extern verifiziert: `k3d.io`, host-aliases). Genau das steht als Default `postgres_host` in `database.tf`.
+Postgres läuft per Docker Compose auf dem **Host** (Port 5432). Die OpenBao-Pods im k3d-Cluster erreichen den Host über **`host.k3d.internal`** — k3d spiegelt diesen Namen automatisch in den Cluster (extern verifiziert: `k3d.io`, host-aliases). Genau das steht als Default `postgres_host` in `database.tf`.
 
 #### Schritt 3 — Engine, Connection & Static Role per OpenTofu anlegen
 
@@ -1205,9 +1215,9 @@ docker compose -f files/3-kubernetes/postgres/docker-compose.yml down -v
 
 - **Pods bleiben `0/1 Ready`** — normal, solange sealed. Erst nach Unseal (Teil 2) bzw. Auto-Unseal (Teil 4) werden sie ready.
 - **Pods bleiben `Pending`** — die Anti-Affinity verlangt drei Nodes. Cluster wirklich mit `--agents 2` (= 3 Nodes) gebaut? `kubectl get nodes`.
-- `**raft join` schlägt fehl** — Pod 0 muss zuerst initialisiert **und** entsiegelt sein, sonst gibt es keinen Leader.
+- **`raft join` schlägt fehl** — Pod 0 muss zuerst initialisiert **und** entsiegelt sein, sonst gibt es keinen Leader.
 - **Auto-Unseal-Pods bleiben sealed** — Token-Secret falsch (`openbao-transit-token`), Unsealer nicht ready, oder Transit-Key/Mount-Pfad stimmt nicht. Logs: `kubectl -n openbao logs openbao-0`.
 - **CLI ignoriert die Adresse** — `BAO_ADDR` statt `VAULT_ADDR` gesetzt (siehe Gotcha oben, [[docker]]).
-- `**tofu apply` 403/connection refused** — Port-Forward läuft nicht, oder `VAULT_TOKEN` fehlt/abgelaufen.
+- **`tofu apply` 403/connection refused** — Port-Forward läuft nicht, oder `VAULT_TOKEN` fehlt/abgelaufen.
 - **Dev-Unsealer neu gestartet** → Transit-Key verloren → HA-Cluster nicht mehr auto-unsealbar. Im Workshop einfach Teil 4 neu durchlaufen; produktiv Unsealer persistent halten.
 

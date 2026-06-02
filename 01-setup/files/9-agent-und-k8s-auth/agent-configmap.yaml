@@ -1,0 +1,42 @@
+# agent-configmap.yaml — Konfiguration für den OpenBao Agent (Sidecar).
+# Begleitend zu 9-agent-und-k8s-auth.md.
+#
+# Der Agent loggt sich per kubernetes-Auth ein (Auto-Auth) und rendert das
+# Secret kv/workshop/hello in /vault/secrets/config.env. Bei KV v2 die
+# .Data.data-Ebene beachten (siehe 5-secrets-cli.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bao-agent-config
+  namespace: default
+data:
+  agent.hcl: |
+    # bei sealed/Neustart nicht endlos blockieren, sondern weiterlaufen
+    exit_after_auth = false
+
+    vault {
+      address = "http://openbao.openbao.svc:8200"
+    }
+
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "auth/kubernetes"
+        config = {
+          role = "demo-app"
+        }
+      }
+
+      sink "file" {
+        config = {
+          path = "/vault/secrets/.token"
+        }
+      }
+    }
+
+    # Secret in eine Datei rendern, die die App einfach liest.
+    template {
+      destination = "/vault/secrets/config.env"
+      contents    = <<-EOT
+        APP_MESSAGE={{ with secret "kv/data/workshop/hello" }}{{ .Data.data.message }}{{ end }}
+      EOT
+    }
