@@ -81,6 +81,8 @@ bao secrets enable -path=kv kv
 
 > **Dev-Mode:** Dort ist unter `secret/` bereits eine **KV v2** vormontiert — `secrets enable` entfällt, du kannst direkt schreiben. Bei einem persistenten Server (Variante B) musst du die Engine wie oben einmalig aktivieren.
 
+> **Direkt nach dem Aktivieren** kann der **erste Schreibvorgang** kurz mit `Upgrading from non-versioned to versioned data. This backend will be unavailable for a brief period` scheitern — die Engine richtet sich gerade ein. Einfach ein paar Sekunden warten und den `kv put` erneut ausführen.
+
 Prüfen:
 
 ```bash

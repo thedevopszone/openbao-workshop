@@ -21,6 +21,9 @@ case "$MODE" in
     bao operator raft snapshot save "$OUT_DIR/$FILE"
     ;;
   docker)
+    # Hinweis: snapshot braucht einen privilegierten Token. Entweder vorher
+    # einmal im Container einloggen (docker compose exec -it "$SVC" bao login)
+    # oder VAULT_TOKEN unten mit '-e VAULT_TOKEN=...' an exec übergeben.
     docker compose exec -T "$SVC" sh -c \
       'BAO_ADDR=http://127.0.0.1:8200 bao operator raft snapshot save /tmp/bao.snap'
     docker compose cp "$SVC:/tmp/bao.snap" "$OUT_DIR/$FILE"

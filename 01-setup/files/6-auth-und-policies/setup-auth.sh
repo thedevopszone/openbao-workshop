@@ -29,9 +29,21 @@ bao write auth/approle/role/ci \
 echo "==> RoleID (statisch, darf in die App-Config):"
 bao read -field=role_id auth/approle/role/ci/role-id
 
-echo "==> Audit-Device aktivieren (file)"
-bao audit enable file file_path=/openbao/logs/audit.log 2>/dev/null \
-  || echo "   audit-file bereits aktiv"
+echo "==> Audit-Device"
+# Ab OpenBao v2.5 ist das Anlegen von Audit-Devices über die API/CLI
+# standardmäßig deaktiviert ("use declarative, config-based audit device
+# management instead"). Empfohlen: audit-Stanza in der Server-config.hcl
+# (siehe 6-auth-und-policies.md, Teil 5). Nur wenn die config.hcl
+# unsafe_allow_api_audit_creation = true setzt, klappt der CLI-Weg:
+if bao audit enable file file_path=/openbao/logs/audit.log 2>/dev/null; then
+  echo "   audit-file via API aktiviert"
+elif bao audit list 2>/dev/null | grep -q file; then
+  echo "   audit-file bereits aktiv (vermutlich deklarativ via config)"
+else
+  echo "   HINWEIS: Audit nicht über die API aktivierbar — deklarativ in"
+  echo "            config.hcl konfigurieren (Teil 5) oder"
+  echo "            unsafe_allow_api_audit_creation = true setzen."
+fi
 
 cat <<'EOF'
 

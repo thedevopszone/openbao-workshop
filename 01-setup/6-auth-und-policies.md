@@ -181,19 +181,47 @@ bao token revoke -self      # als Root ausgeführt: widerruft den Root-Token
 
 ## Teil 5 — Audit aktivieren (jetzt wird's prüfbar)
 
-Sobald echte Identitäten zugreifen, willst du nachvollziehen können, **wer wann was** angefragt hat. Ein Audit-Device protokolliert jede Anfrage/Antwort (Secrets darin gehasht):
+Sobald echte Identitäten zugreifen, willst du nachvollziehen können, **wer wann was** angefragt hat. Ein Audit-Device protokolliert jede Anfrage/Antwort (Secrets darin gehasht).
+
+> **Wichtige Änderung ab OpenBao v2.5.** Das Anlegen von Audit-Devices **über die API/CLI ist standardmäßig deaktiviert** — ein `bao audit enable file …` quittiert mit:
+> `cannot enable audit device via API; use declarative, config-based audit device management instead`.
+> Grund: Ein Audit-File-Device kann an beliebige Pfade schreiben — das ist eine System-Operation, kein API-Recht. Es gibt zwei Wege:
+
+**Weg A (empfohlen) — deklarativ in der Server-Config.** Eine `audit`-Stanza in der `config.hcl` (siehe `1-docker-single-node.md`). Das Device wird beim Start/`SIGHUP` auf dem aktiven Node angelegt:
+
+```hcl
+audit "file" "compliance" {
+  options {
+    file_path = "/openbao/logs/audit.log"
+  }
+}
+```
+
+**Weg B — die API/CLI freischalten.** Nur wenn du `bao audit enable` zur Laufzeit brauchst: in der `config.hcl` einmalig
+
+```hcl
+unsafe_allow_api_audit_creation = true
+```
+
+setzen (Server neu starten). Danach funktioniert wie früher:
 
 ```bash
 bao audit enable file file_path=/openbao/logs/audit.log
 bao audit list
 ```
 
+Prüfen, dass das Device aktiv ist (beide Wege):
+
 ```bash
-# danach z. B. fehlgeschlagene Zugriffe sehen
+bao audit list
+```
+
+```bash
+# danach z. B. fehlgeschlagene Zugriffe sehen (Pfad/Container je nach Setup)
 docker compose exec openbao sh -c 'grep "permission denied" /openbao/logs/audit.log'
 ```
 
-> **Gotcha:** Lässt sich kein Audit-Device aktivieren (z. B. Pfad nicht schreibbar), kann OpenBao **blockieren**, wenn das einzige Device ausfällt — deshalb in Produktion **zwei** Devices. Im Workshop reicht eins; den Log-Volume hat Variante B schon (`openbao-logs`).
+> **Gotcha:** Fällt das **einzige** Audit-Device aus (z. B. Pfad nicht mehr schreibbar), kann OpenBao **blockieren** — deshalb in Produktion **zwei** Devices. Im Workshop reicht eins; den Log-Volume hat Variante B schon (`openbao-logs`).
 
 ---
 
@@ -221,8 +249,10 @@ bao write auth/approle/login role_id=... secret_id=...
 bao token lookup / renew / revoke <token>
 bao token revoke -self            # Root abschalten
 
-# Audit
-bao audit enable file file_path=/openbao/logs/audit.log
+# Audit (ab v2.5: deklarativ in config.hcl, siehe Teil 5 — oder
+#         unsafe_allow_api_audit_creation = true für die CLI-Variante)
+bao audit list
+bao audit enable file file_path=/openbao/logs/audit.log   # nur mit unsafe-Flag
 ```
 
 > Fertige Dateien: `files/6-auth-und-policies/` — Policies (`workshop-read.hcl`, `workshop-write.hcl`) und ein `setup-auth.sh`, das userpass, AppRole, Policies und Audit in einem Rutsch einrichtet.
