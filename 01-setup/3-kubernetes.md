@@ -1038,7 +1038,7 @@ Jetzt schließt sich der Kreis zum Operator: ESO liest die Static-Creds aus Open
 
 ```yaml
 # eso-postgres.yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: openbao
@@ -1054,7 +1054,7 @@ spec:
           namespace: external-secrets
           key: token
 ---
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: app-db
@@ -1215,7 +1215,7 @@ docker compose -f files/3-kubernetes/postgres/docker-compose.yml down -v
 
 - **Pods bleiben `0/1 Ready`** — normal, solange sealed. Erst nach Unseal (Teil 2) bzw. Auto-Unseal (Teil 4) werden sie ready.
 - **Pods bleiben `Pending`** — die Anti-Affinity verlangt drei Nodes. Cluster wirklich mit `--agents 2` (= 3 Nodes) gebaut? `kubectl get nodes`.
-- **`raft join` schlägt fehl** — Pod 0 muss zuerst initialisiert **und** entsiegelt sein, sonst gibt es keinen Leader.
+- **`raft join` schlägt fehl** — Pod 0 muss zuerst initialisiert **und** entsiegelt sein, sonst gibt es keinen Leader. Außerdem muss der **joinende** Pod selbst schon laufen: direkt nach `Running` ist die lokale API evtl. noch nicht gebunden (`connect: connection refused` auf `127.0.0.1:8200`) — dann kurz warten (z. B. `kubectl -n openbao exec openbao-1 -- bao status` bis es antwortet) und `raft join` erneut ausführen.
 - **Auto-Unseal-Pods bleiben sealed** — Token-Secret falsch (`openbao-transit-token`), Unsealer nicht ready, oder Transit-Key/Mount-Pfad stimmt nicht. Logs: `kubectl -n openbao logs openbao-0`.
 - **CLI ignoriert die Adresse** — `BAO_ADDR` statt `VAULT_ADDR` gesetzt (siehe Gotcha oben, [[docker]]).
 - **`tofu apply` 403/connection refused** — Port-Forward läuft nicht, oder `VAULT_TOKEN` fehlt/abgelaufen.

@@ -1,0 +1,39 @@
+# openbao-rbac.yaml — RBAC, damit die kubernetes Secrets Engine funktioniert.
+# Begleitend zu 13-k8s-engine-und-dr.md, Teil 1.
+#
+# Die Engine erzeugt pro Anfrage einen ServiceAccount samt (Cluster)Role und
+# (Cluster)RoleBinding. Dafür muss OpenBaos eigener ServiceAccount
+# (Default: openbao/openbao aus dem Helm-Chart) genau diese Objekte anlegen
+# und Tokens ausstellen dürfen. Ohne diese Rechte quittiert
+# `bao write kubernetes/creds/...` mit HTTP 500 ("... is forbidden").
+#
+#   kubectl apply -f openbao-rbac.yaml
+#
+# SA-Name/-Namespace ggf. an euer Release anpassen.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openbao-k8s-secrets-engine
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts", "serviceaccounts/token"]
+    verbs: ["create", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings"]
+    verbs: ["create", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "clusterroles"]
+    verbs: ["create", "update", "delete", "bind", "escalate"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-k8s-secrets-engine
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openbao-k8s-secrets-engine
+subjects:
+  - kind: ServiceAccount
+    name: openbao
+    namespace: openbao

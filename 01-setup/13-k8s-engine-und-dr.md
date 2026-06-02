@@ -23,6 +23,12 @@ Die Engine erzeugt **pro Anfrage** einen ServiceAccount (oder nutzt einen besteh
 
 ### Einrichten
 
+> **Zuerst RBAC geben.** Die Engine legt pro Anfrage einen ServiceAccount + (Cluster)Role + (Cluster)RoleBinding an. OpenBaos eigener ServiceAccount (Default `openbao/openbao` aus dem Helm-Chart) darf das standardmäßig **nicht** — sonst quittiert `bao write kubernetes/creds/...` mit `HTTP 500 … is forbidden`. Einmalig die nötigen Rechte vergeben (`files/13-k8s-engine-und-dr/openbao-rbac.yaml`):
+>
+> ```bash
+> kubectl apply -f files/13-k8s-engine-und-dr/openbao-rbac.yaml
+> ```
+
 ```bash
 bao secrets enable kubernetes
 
@@ -85,11 +91,13 @@ kubectl -n openbao get pods -w
 # 2) den neuen Cluster initialisieren + (auto-)unsealen, damit ein Leader existiert
 kubectl -n openbao exec -ti openbao-0 -- bao operator init \
   -recovery-shares=1 -recovery-threshold=1     # temporär; wird vom Restore überschrieben
+# -> den ausgegebenen Initial Root Token merken (für den Restore-Aufruf unten)
 
-# 3) Snapshot in den Pod kopieren und mit -force zurückspielen
+# 3) Snapshot in den Pod kopieren und mit -force zurückspielen.
+#    Restore braucht einen Token; im frischen Pod ist keiner gecacht -> explizit mitgeben:
 kubectl -n openbao cp ./bao.snap openbao-0:/tmp/bao.snap
 kubectl -n openbao exec -ti openbao-0 -- \
-  bao operator raft snapshot restore -force /tmp/bao.snap
+  sh -c 'VAULT_TOKEN=<root-token-aus-Schritt-2> bao operator raft snapshot restore -force /tmp/bao.snap'
 ```
 
 > `-force` ist nötig, weil der Snapshot-Cluster eine **andere Cluster-Identität** hat als das frische Release. Nach dem Restore gelten wieder die **alten** Daten *und* der **alte** Seal:
@@ -121,8 +129,8 @@ bao write kubernetes/creds/ci-deployer kubernetes_namespace=default   # kurzlebi
 # Disaster Recovery
 bao operator raft snapshot save bao.snap                 # vorher, regelmäßig (8-operations.md)
 helm install openbao ... -f values-autounseal.yaml       # frisches Release
-bao operator init -recovery-shares=1 -recovery-threshold=1
-bao operator raft snapshot restore -force /tmp/bao.snap  # alte Daten + alter Seal zurück
+bao operator init -recovery-shares=1 -recovery-threshold=1   # Root-Token merken
+VAULT_TOKEN=<root-token> bao operator raft snapshot restore -force /tmp/bao.snap  # alte Daten + alter Seal zurück
 ```
 
 > Fertige Dateien: `files/13-k8s-engine-und-dr/` — `setup-k8s-engine.sh` und `restore.sh` (DR-Restore-Ablauf).

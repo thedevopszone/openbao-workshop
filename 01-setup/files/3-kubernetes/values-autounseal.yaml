@@ -1,0 +1,40 @@
+server:
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable     = 1
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+
+          retry_join { leader_api_addr = "http://openbao-0.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-1.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-2.openbao-internal:8200" }
+        }
+
+        service_registration "kubernetes" {}
+
+        seal "transit" {
+          address    = "http://openbao-transit.transit.svc:8200"
+          mount_path = "transit/"
+          key_name   = "openbao-unseal"
+        }
+
+  # Token für den Transit-Unsealer als VAULT_TOKEN aus dem Secret injizieren
+  extraSecretEnvironmentVars:
+    - envName: VAULT_TOKEN
+      secretName: openbao-transit-token
+      secretKey: token
+
+ui:
+  enabled: true

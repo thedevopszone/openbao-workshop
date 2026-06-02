@@ -1,6 +1,6 @@
 # eso-postgres.yaml — External Secrets Operator liest die rotierende
 # Static-Role-Credential aus OpenBao und schreibt sie ins k8s-Secret "app-db".
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: openbao
@@ -16,7 +16,7 @@ spec:
           namespace: external-secrets
           key: token
 ---
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: app-db

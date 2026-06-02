@@ -169,7 +169,7 @@ volumes:
 
 Erklärung (Container-Pfade extern verifiziert: Docker Hub):
 
-- `command: server -config=/openbao/config` — startet `bao server` und liest **das ganze Verzeichnis** `/openbao/config` (alle `.hcl`/`.json` alphabetisch, Referenz: [[configuration]]).
+- `command: server` — startet `bao server`. Das Image liest standardmäßig **das ganze Verzeichnis** `/openbao/config` (alle `.hcl`/`.json` alphabetisch, Referenz: [[configuration]]); explizit wäre das `server -config=/openbao/config`.
 - `./config:/openbao/config:ro` — deine Konfig read-only eingehängt.
 - Named Volume `openbao-file` → `/openbao/file` — hier liegen die verschlüsselten Daten und überleben `docker compose down`.
 - `openbao-logs` → `/openbao/logs` — für persistente [Audit](6-auth-und-policies.md)-Logs (optional, aber empfohlen).
@@ -188,11 +188,11 @@ bao status
 Key                Value
 ---                -----
 Seal Type          shamir
-Initialized        true # Noch nicht initialisiert, keine Unseal Keys
-Sealed             true # Verschlüsselt, muss noch unsealed werden
-Total Shares       5
-Threshold          3
-Unseal Progress    0/3
+Initialized        false # Noch nicht initialisiert, keine Unseal Keys
+Sealed             true  # Verschlüsselt, muss noch unsealed werden
+Total Shares       0
+Threshold          0
+Unseal Progress    0/0
 Unseal Nonce       n/a
 Version            2.5.4
 Build Date         2026-05-20T16:08:53Z
@@ -332,5 +332,5 @@ listener "tcp" {
 - **TLS**: niemals produktiv mit `tls_disable`.
 - **Storage**: `file` ist Single-Node ohne HA. Für mehr als „Testen/Lernen" auf [[raft]] und ein echtes [[deployment-vm-vs-k8s|VM-/K8s-Deployment]] gehen.
 - **Auto-Unseal**: manuelles Unseal nach jedem Restart ist im Container besonders lästig — produktiv KMS-basiertes Auto-Unseal ([[seal-unseal]]).
-- **Audit**: nach dem Login zwei [Audit](6-auth-und-policies.md)-Devices aktivieren.
+- **Audit**: zwei [Audit](6-auth-und-policies.md)-Devices vorsehen. Ab OpenBao v2.5 werden sie **deklarativ in der Config** angelegt (`audit "file" "name" { options { file_path = "/openbao/logs/audit.log" } }`), nicht mehr per `bao audit enable` (das ist ohne `unsafe_allow_api_audit_creation = true` gesperrt — Details in [6-auth-und-policies.md](6-auth-und-policies.md), Teil 5).
 

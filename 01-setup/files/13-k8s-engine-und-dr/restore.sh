@@ -15,21 +15,26 @@ SNAP="${1:?Pfad zum Snapshot angeben: ./restore.sh ./bao.snap}"
 NS="${NS:-openbao}"
 POD="${POD:-openbao-0}"
 
+# Snapshot-Restore braucht einen privilegierten Token. Im frisch initialisierten
+# Cluster gibt es noch keinen gecachten ~/.vault-token, also VAULT_TOKEN explizit
+# setzen (Root-Token aus Schritt 2) — sonst: "permission denied".
+: "${VAULT_TOKEN:?Bitte VAULT_TOKEN auf den Root-Token des frischen Clusters setzen (aus 'bao operator init' in Schritt 2)}"
+
 echo "==> 1) Frisches Release muss bereits deployed sein (NICHT alte PVCs wiederverwenden)."
 echo "       helm install openbao openbao/openbao -n ${NS} -f values-autounseal.yaml"
 echo
 
 echo "==> 2) Neuen Cluster initialisieren (temporär; wird vom Restore überschrieben)"
-kubectl -n "${NS}" exec -ti "${POD}" -- \
-  bao operator init -recovery-shares=1 -recovery-threshold=1 || \
-  echo "   (vermutlich schon initialisiert — weiter)"
+echo "       kubectl -n ${NS} exec -ti ${POD} -- bao operator init -recovery-shares=1 -recovery-threshold=1"
+echo "       (Root-Token davon als VAULT_TOKEN exportieren, dann dieses Skript erneut aufrufen)"
+echo
 
 echo "==> 3) Snapshot in den Pod kopieren"
 kubectl -n "${NS}" cp "${SNAP}" "${POD}:/tmp/bao.snap"
 
 echo "==> 4) Restore mit -force (andere Cluster-Identität als das frische Release)"
 kubectl -n "${NS}" exec -ti "${POD}" -- \
-  bao operator raft snapshot restore -force /tmp/bao.snap
+  sh -c "VAULT_TOKEN=${VAULT_TOKEN} bao operator raft snapshot restore -force /tmp/bao.snap"
 
 echo "==> 5) Verifizieren"
 kubectl -n "${NS}" exec -ti "${POD}" -- bao status

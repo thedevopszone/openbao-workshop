@@ -11,6 +11,11 @@
 set -euo pipefail
 
 NS="${NS:-default}"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "==> RBAC für OpenBaos ServiceAccount (SAs/Roles/Bindings anlegen dürfen)"
+# Ohne diese Rechte schlägt 'bao write kubernetes/creds/...' mit HTTP 500 fehl.
+kubectl apply -f "$DIR/openbao-rbac.yaml"
 
 echo "==> kubernetes Secrets Engine aktivieren + konfigurieren"
 bao secrets enable kubernetes 2>/dev/null || echo "   kubernetes-engine bereits aktiv"

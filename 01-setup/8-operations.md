@@ -32,15 +32,16 @@ Bei **Integrated Raft** liegen alle Daten (Secrets, Policies, Auth-Konfig, Mount
 bao operator raft snapshot save bao-$(date +%F).snap
 ```
 
-Im Docker-/k8s-Kontext aus dem Container heraus und herauskopieren:
+Im Docker-/k8s-Kontext aus dem Container heraus und herauskopieren. **Snapshot/Restore brauchen einen privilegierten Token** — innerhalb des Containers/Pods ist normalerweise keiner gesetzt, also entweder vorher dort `bao login` ausführen (cached in `~/.vault-token`) **oder** `VAULT_TOKEN` direkt mitgeben (sonst `permission denied`):
 
 ```bash
 # Docker Compose (Cluster aus 2-docker-cluster.md)
+# Variante a) vorher einmal im Container einloggen: docker compose exec -it bao-1 bao login
 docker compose exec bao-1 sh -c 'BAO_ADDR=http://127.0.0.1:8200 bao operator raft snapshot save /tmp/bao.snap'
 docker compose cp bao-1:/tmp/bao.snap ./bao.snap
 
-# Kubernetes
-kubectl -n openbao exec openbao-0 -- sh -c 'bao operator raft snapshot save /tmp/bao.snap'
+# Kubernetes (Token explizit mitgeben)
+kubectl -n openbao exec openbao-0 -- sh -c 'VAULT_TOKEN=<root-token> bao operator raft snapshot save /tmp/bao.snap'
 kubectl -n openbao cp openbao-0:/tmp/bao.snap ./bao.snap
 ```
 
