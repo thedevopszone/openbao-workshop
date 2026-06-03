@@ -150,6 +150,10 @@ Ideal für Load-Balancer und Probes:
 
 ```bash
 curl -s http://127.0.0.1:8200/v1/sys/health | jq
+
+# oder
+curl -s https://openbao.intern.devopsdns.com/v1/sys/health | jq
+
 ```
 
 Der **HTTP-Statuscode** kodiert den Zustand (extern verifiziert: `openbao.org/api-docs/system/health`):

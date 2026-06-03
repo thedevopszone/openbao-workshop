@@ -95,8 +95,16 @@ log.level = INFO
 ```bash
 export SOFTHSM2_CONF=/opt/openbao/softhsm/softhsm2.conf
 
-softhsm2-util --init-token --free --label "OpenBao" --so-pin 1234 --pin 4321
-softhsm2-util --show-slots
+sudo chown -R openbao:openbao /opt/openbao/softhsm/tokens
+
+# 3. Initialize the token as the openbao user (with the correct config)
+sudo -u openbao env SOFTHSM2_CONF=/opt/openbao/softhsm/softhsm2.conf \
+  softhsm2-util --init-token --free --label "OpenBao" --so-pin 1234 --pin 4321
+
+
+# 4. Verify
+sudo -u openbao env SOFTHSM2_CONF=/opt/openbao/softhsm/softhsm2.conf \
+  softhsm2-util --show-slots
 ```
 
 `--free` nimmt den ersten freien Slot. SoftHSM vergibt eine **zufällige Slot-Nummer** — deshalb adressieren wir den Token später über `token_label = "OpenBao"`, nicht über die Slot-Nummer.
@@ -108,11 +116,14 @@ softhsm2-util --show-slots
 OpenBao verlangt, dass das Key-Material **vor** der Initialisierung im HSM existiert. Für SoftHSMv2 nehmen wir ein **RSA-Schlüsselpaar** (Mechanismus RSA-OAEP) — AES-GCM ist mit SoftHSMv2 problematisch.
 
 ```bash
+
+sudo -u openbao env SOFTHSM2_CONF=/opt/openbao/softhsm/softhsm2.conf \
 pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
   --token-label "OpenBao" --pin 4321 \
   --keypairgen --key-type rsa:4096 --label "bao-root-key-rsa"
 
 # Verifizieren
+sudo -u openbao env SOFTHSM2_CONF=/opt/openbao/softhsm/softhsm2.conf \
 pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
   --token-label "OpenBao" --pin 4321 --list-objects
 ```
@@ -168,7 +179,7 @@ docker build -t bao-hsm-softhsm:dev files/4-soft-HSM/
 k3d image import bao-hsm-softhsm:dev -c openbao-hsm    # erst nach Teil 3 ausführbar
 ```
 
-> **Eine Stelle, die du auf deinem Host bestätigen musst:** ob `softhsm` auf dem UBI-Image via EPEL verfügbar ist und unter welchem Pfad die Library landet. Der `find`-Aufruf im Build gibt beides aus. Schlägt EPEL fehl, ist die Alternative ein Image **`FROM openbao/openbao-hsm` (Alpine)** mit `apk add softhsm2` — dann liegt die Library typischerweise unter `/usr/lib/softhsm/libsofthsm2.so`. Beide Images sind offiziell (extern verifiziert: `hub.docker.com/r/openbao/openbao-hsm-ubi`, `…/openbao-hsm`).
+> **Eine Stelle, die du auf deinem Host bestätigen musst:** ob `softhsm` auf dem UBI-Image via EPEL verfügbar ist und unter welchem Pfad die Library landet. Der `find`-Aufruf im Build gibt beides aus. Schlägt EPEL fehl, ist die Alternative ein Image **`FROM openbao/openbao-hsm`** (Alpine) mit `apk add softhsm2` — dann liegt die Library typischerweise unter `/usr/lib/softhsm/libsofthsm2.so`. Beide Images sind offiziell (extern verifiziert: `hub.docker.com/r/openbao/openbao-hsm-ubi`, `…/openbao-hsm`).
 
 ---
 
@@ -352,12 +363,14 @@ kubectl -n openbao logs openbao-1 | grep -i unseal
 ## Wo die SoftHSM-Analogie zum echten HSM endet
 
 > Diese Übung modelliert **vier** der fünf wichtigen Prod-Eigenschaften korrekt:
+>
 > 1. **HSM-fähiges Image** (cgo/pkcs11, `openbao-hsm-ubi`) — wie in Prod.
 > 2. **Der Key verlässt das HSM nie** (`never extractable`) — wie in Prod.
 > 3. **PIN/Credentials als Kubernetes-Secret**, nicht in der Config — wie in Prod.
 > 4. **Auto-Unseal bei Pod-Restart** — wie in Prod.
 >
 > Was hier **anders** ist als bei einem echten HSM:
+>
 > - **SoftHSM ist dateibasiert und lokal.** Ein echtes HSM ist ein Gerät bzw. ein **Netzwerk-/Cloud-HSM**, das die Pods über die **Vendor-PKCS#11-Library** *übers Netz* erreichen. Unser `hostPath`-Mount steht stellvertretend für „das HSM ist vom Pod aus erreichbar" — in Wirklichkeit ist es ein Netzwerk-Call, kein Filesystem-Zugriff.
 > - **In Prod** nimmst du `openbao/openbao-hsm-ubi` (oder ein Image darüber) **mit der Client-Library deines HSM-Herstellers** statt SoftHSM, zeigst in der `seal "pkcs11"`-Stanza per `lib`/`slot`/`token_label` auf das HSM, lieferst die PIN über ein Secret (oder `LoadCredential`/CSI) — und es gibt **keinen `hostPath`**.
 > - **HSM-HA:** Echte HSMs sind selbst geclustert/redundant. Hier teilen sich drei Pods **einen** read-only Token-Store.
@@ -368,15 +381,17 @@ kubectl -n openbao logs openbao-1 | grep -i unseal
 
 ## Troubleshooting
 
-| Symptom | Ursache / Lösung |
-| --- | --- |
-| Pod `CrashLoopBackOff`, Log: `seal "pkcs11" … no such file` | `lib`-Pfad falsch. Den realen Pfad aus dem Build (`find … libsofthsm2.so`) in die `seal`-Stanza eintragen. |
-| `failed to pkcs11 DecryptInit: CKR_ARGUMENTS_BAD` beim Init | `rsa_oaep_hash` auf `sha1` stellen (SoftHSMv2 kann kein OAEP-SHA256). Lief der Init schon halb durch, PVCs leeren und neu init: `kubectl -n openbao delete pvc --all`. |
-| `CKR_TOKEN_NOT_PRESENT` / Token nicht gefunden | `SOFTHSM2_CONF` im Pod zeigt nicht auf eine Config mit `tokendir = /softhsm/tokens`, oder der k3d-`--volume`-Mount fehlt. `kubectl -n openbao exec openbao-0 -- ls /softhsm/tokens` prüfen. |
-| `permission denied` beim Token-Lesen | Token-Dateien auf dem Host nicht lesbar für den Pod-User. `sudo chmod -R a+rX /opt/openbao/softhsm/tokens` (Teil 1.5). |
-| `CKR_PIN_INCORRECT` | `BAO_HSM_PIN`-Secret ≠ bei `--init-token` gesetzte `--pin`. Tipp: Secret ohne Steuerzeichen anlegen (siehe `3-kubernetes.md`, 4.3 — `CrashLoopBackOff` durch `\x1b`/`\n` im Token/PIN). |
-| `Seal Type` ist `shamir` statt `pkcs11` | Es läuft das Standard-Image statt `bao-hsm-softhsm`. `server.image`/`tag` prüfen, `k3d image import` gemacht? |
-| Pod bleibt `0/1 Ready` | Vor `bao operator init` normal. Danach: HSM nicht erreichbar — `kubectl -n openbao logs openbao-0`. |
+
+| Symptom                                                     | Ursache / Lösung                                                                                                                                                                            |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pod `CrashLoopBackOff`, Log: `seal "pkcs11" … no such file` | `lib`-Pfad falsch. Den realen Pfad aus dem Build (`find … libsofthsm2.so`) in die `seal`-Stanza eintragen.                                                                                  |
+| `failed to pkcs11 DecryptInit: CKR_ARGUMENTS_BAD` beim Init | `rsa_oaep_hash` auf `sha1` stellen (SoftHSMv2 kann kein OAEP-SHA256). Lief der Init schon halb durch, PVCs leeren und neu init: `kubectl -n openbao delete pvc --all`.                      |
+| `CKR_TOKEN_NOT_PRESENT` / Token nicht gefunden              | `SOFTHSM2_CONF` im Pod zeigt nicht auf eine Config mit `tokendir = /softhsm/tokens`, oder der k3d-`--volume`-Mount fehlt. `kubectl -n openbao exec openbao-0 -- ls /softhsm/tokens` prüfen. |
+| `permission denied` beim Token-Lesen                        | Token-Dateien auf dem Host nicht lesbar für den Pod-User. `sudo chmod -R a+rX /opt/openbao/softhsm/tokens` (Teil 1.5).                                                                      |
+| `CKR_PIN_INCORRECT`                                         | `BAO_HSM_PIN`-Secret ≠ bei `--init-token` gesetzte `--pin`. Tipp: Secret ohne Steuerzeichen anlegen (siehe `3-kubernetes.md`, 4.3 — `CrashLoopBackOff` durch `\x1b`/`\n` im Token/PIN).     |
+| `Seal Type` ist `shamir` statt `pkcs11`                     | Es läuft das Standard-Image statt `bao-hsm-softhsm`. `server.image`/`tag` prüfen, `k3d image import` gemacht?                                                                               |
+| Pod bleibt `0/1 Ready`                                      | Vor `bao operator init` normal. Danach: HSM nicht erreichbar — `kubectl -n openbao logs openbao-0`.                                                                                         |
+
 
 ## Sicherheitshinweise (Workshop ≠ Produktion)
 
@@ -516,3 +531,4 @@ sudo rm -f /etc/systemd/system/openbao-hsm.service && sudo systemctl daemon-relo
 sudo rm -rf /opt/openbao/data/*
 # optional: sudo rm -f /usr/local/bin/bao-hsm
 ```
+
