@@ -1,0 +1,63 @@
+server:
+  image:
+    repository: bao-hsm-softhsm     # das per k3d image import geladene Custom-Image
+    tag: dev
+    pullPolicy: IfNotPresent        # lokal vorhandenes Image nutzen, nicht aus Registry ziehen
+
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable     = 1
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+
+          retry_join { leader_api_addr = "http://openbao-0.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-1.openbao-internal:8200" }
+          retry_join { leader_api_addr = "http://openbao-2.openbao-internal:8200" }
+        }
+
+        service_registration "kubernetes" {}
+
+        seal "pkcs11" {
+          lib           = "/usr/lib64/softhsm/libsofthsm2.so"   # <-- Pfad aus dem Build (Dockerfile)!
+          token_label   = "OpenBao"
+          key_label     = "bao-root-key-rsa"
+          mechanism     = "RSA_PKCS_OAEP"
+          rsa_oaep_hash = "sha1"
+          # pin NICHT hier — kommt über BAO_HSM_PIN aus dem Secret
+        }
+
+  # SoftHSM-Config (Pod-Sicht) ist im Image gebacken: /etc/softhsm/softhsm2.conf
+  extraEnvironmentVars:
+    SOFTHSM2_CONF: /etc/softhsm/softhsm2.conf
+
+  # PIN aus dem Secret als Umgebungsvariable injizieren
+  extraSecretEnvironmentVars:
+    - envName: BAO_HSM_PIN
+      secretName: openbao-hsm-pin
+      secretKey: pin
+
+  # Host-Token-Store read-only in jeden Pod (hostPath zeigt auf den k3d-Node-Mount)
+  volumes:
+    - name: softhsm-tokens
+      hostPath:
+        path: /softhsm/tokens
+        type: Directory
+  volumeMounts:
+    - name: softhsm-tokens
+      mountPath: /softhsm/tokens
+      readOnly: true
+
+ui:
+  enabled: true
