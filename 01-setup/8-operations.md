@@ -10,12 +10,14 @@ Was nach dem Aufsetzen kommt: **Raft-Snapshots** (Backup & Restore — der Daten
 
 Die bisherigen Kapitel haben OpenBao aufgesetzt und benutzt. Im echten Betrieb entscheidet etwas anderes über Erfolg oder Datenverlust:
 
-| Aufgabe | Frage | Befehl |
-| ------------ | ------------------------------------- | ----------------------------- |
-| **Backup** | Wie hole ich alles zurück nach Crash? | `operator raft snapshot` |
-| **Rekey** | Unseal-Keys neu verteilen/widerrufen | `operator rekey` |
-| **Rotate** | Encryption-Key turnusmäßig wechseln | `operator rotate` |
-| **Monitoring**| Läuft er? Wird er voll? | `sys/health`, `sys/metrics` |
+
+| Aufgabe        | Frage                                 | Befehl                      |
+| -------------- | ------------------------------------- | --------------------------- |
+| **Backup**     | Wie hole ich alles zurück nach Crash? | `operator raft snapshot`    |
+| **Rekey**      | Unseal-Keys neu verteilen/widerrufen  | `operator rekey`            |
+| **Rotate**     | Encryption-Key turnusmäßig wechseln   | `operator rotate`           |
+| **Monitoring** | Läuft er? Wird er voll?               | `sys/health`, `sys/metrics` |
+
 
 > Diese Dinge übt man **vor** dem Ernstfall. Ein Backup, das man nie zurückgespielt hat, ist kein Backup.
 
@@ -74,12 +76,14 @@ Das ist der überzeugendste Teil: einmal real zurückgespielt zu haben.
 
 Zwei verschiedene Schlüssel, zwei verschiedene Operationen — werden oft verwechselt:
 
-| | **Rekey** (`operator rekey`) | **Rotate** (`operator rotate`) |
-| --------------- | ----------------------------------- | ------------------------------------- |
-| betrifft | **Unseal-/Recovery-Key-Shares** | den **Encryption-Key** (Barrier) |
-| wann | Person scheidet aus, Key-Verdacht, Anzahl Shares ändern | turnusmäßige Hygiene, Compliance |
-| sichtbar | neue Shares werden ausgegeben | unsichtbar, kein Neu-Unseal nötig |
-| Unterbrechung | nein (Server läuft weiter) | nein |
+
+|               | **Rekey** (`operator rekey`)                            | **Rotate** (`operator rotate`)    |
+| ------------- | ------------------------------------------------------- | --------------------------------- |
+| betrifft      | **Unseal-/Recovery-Key-Shares**                         | den **Encryption-Key** (Barrier)  |
+| wann          | Person scheidet aus, Key-Verdacht, Anzahl Shares ändern | turnusmäßige Hygiene, Compliance  |
+| sichtbar      | neue Shares werden ausgegeben                           | unsichtbar, kein Neu-Unseal nötig |
+| Unterbrechung | nein (Server läuft weiter)                              | nein                              |
+
 
 ### Rotate — den Encryption-Key wechseln
 
@@ -105,6 +109,27 @@ bao operator rekey   # alten Key 1 eingeben
 bao operator rekey   # alten Key 2 eingeben
 bao operator rekey   # alten Key 3 eingeben
 # -> gibt die NEUEN Shares aus (einmalig!)
+
+Empfohlener Weg: authentifiziertes Rotate
+
+  Du brauchst einen Token mit sudo auf sys/rotate/root (ein Root-Token reicht). Dann statt bao operator rekey:
+
+  # 1. Rotation initialisieren -> liefert einen nonce
+  bao write -f sys/rotate/root/init secret_shares=5 secret_threshold=3
+
+  # 2. Jeder Key-Holder reicht seine bestehende Unseal-Share ein (3x, bis Threshold erreicht)
+  bao write sys/rotate/root/update key=<unseal-key-share> nonce=<nonce-aus-init>
+
+  Nach der dritten Share ist complete: true und du bekommst die neuen Shares (keys_base64).
+
+  Falls bao write bei dir aus irgendeinem Grund zickt, geht es identisch per curl (Token nicht vergessen — anders als beim alten unauthed-Pfad ist er jetzt Pflicht):
+
+  curl -s --request POST \
+    --header "X-Vault-Token: $BAO_TOKEN" \
+    --data '{"secret_shares":5,"secret_threshold":3}' \
+    https://openbao.intern.devopsdns.com/v1/sys/rotate/root/init
+
+  Status / Abbruch analog über GET bzw. DELETE auf sys/rotate/root/init.
 ```
 
 > **Auto-Unseal (HSM/Transit):** Dort gibt es keine Shamir-Unseal-Keys, sondern **Recovery Keys** (siehe `4-auto-unseal.md`). Die werden mit `bao operator rekey -target=recovery -init ...` neu ausgegeben — analoger Ablauf, anderes Ziel.
@@ -125,13 +150,15 @@ curl -s http://127.0.0.1:8200/v1/sys/health | jq
 
 Der **HTTP-Statuscode** kodiert den Zustand (extern verifiziert: `openbao.org/api-docs/system/health`):
 
-| Code | Bedeutung |
-| ---- | -------------------------------- |
-| 200 | initialisiert, **unsealed**, **aktiv** (Leader) |
-| 429 | unsealed, aber **Standby** |
-| 472 | im Disaster-Recovery-Modus |
-| 501 | **nicht initialisiert** |
-| 503 | **sealed** |
+
+| Code | Bedeutung                                       |
+| ---- | ----------------------------------------------- |
+| 200  | initialisiert, **unsealed**, **aktiv** (Leader) |
+| 429  | unsealed, aber **Standby**                      |
+| 472  | im Disaster-Recovery-Modus                      |
+| 501  | **nicht initialisiert**                         |
+| 503  | **sealed**                                      |
+
 
 In Kubernetes nutzt der Helm-Chart genau das für Readiness/Liveness; gut zu wissen, dass „429" bei Standby-Pods **normal** ist und kein Fehler.
 
@@ -193,12 +220,13 @@ curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
 
 Sammelt die verstreuten Hardening-Hinweise der vorigen Kapitel:
 
-- [ ] **Auto-Unseal** statt manuellem Shamir (`3-kubernetes.md` Transit / `4-auto-unseal.md` HSM)
-- [ ] **TLS** überall an, kein `tls_disable` (`1-docker-single-node.md`)
-- [ ] **Integrated Raft**, ≥ 3 (besser 5) Nodes über getrennte Failure-Domains (`2-docker-cluster.md`)
-- [ ] **Root-Token widerrufen**, Zugriff über Auth-Methoden + Policies (`6-auth-und-policies.md`)
-- [ ] **2 Audit-Devices** aktiv (`6-auth-und-policies.md`)
-- [ ] **Snapshots** automatisiert + Restore **getestet** (dieses Kapitel)
-- [ ] **Key-Rotation** als Routine eingeplant
-- [ ] **Monitoring**: `sys/health`-Probes + Prometheus-Scrape + Alarm auf `vault.core.unsealed == 0`
-- [ ] **mlock**/Swap behandelt (`1-docker-single-node.md`)
+- **Auto-Unseal** statt manuellem Shamir (`3-kubernetes.md` Transit / `4-auto-unseal.md` HSM)
+- **TLS** überall an, kein `tls_disable` (`1-docker-single-node.md`)
+- **Integrated Raft**, ≥ 3 (besser 5) Nodes über getrennte Failure-Domains (`2-docker-cluster.md`)
+- **Root-Token widerrufen**, Zugriff über Auth-Methoden + Policies (`6-auth-und-policies.md`)
+- **2 Audit-Devices** aktiv (`6-auth-und-policies.md`)
+- **Snapshots** automatisiert + Restore **getestet** (dieses Kapitel)
+- **Key-Rotation** als Routine eingeplant
+- **Monitoring**: `sys/health`-Probes + Prometheus-Scrape + Alarm auf `vault.core.unsealed == 0`
+- **mlock**/Swap behandelt (`1-docker-single-node.md`)
+
