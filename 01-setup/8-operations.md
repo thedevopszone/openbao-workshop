@@ -109,28 +109,32 @@ bao operator rekey   # alten Key 1 eingeben
 bao operator rekey   # alten Key 2 eingeben
 bao operator rekey   # alten Key 3 eingeben
 # -> gibt die NEUEN Shares aus (einmalig!)
-
-Empfohlener Weg: authentifiziertes Rotate
-
-  Du brauchst einen Token mit sudo auf sys/rotate/root (ein Root-Token reicht). Dann statt bao operator rekey:
-
-  # 1. Rotation initialisieren -> liefert einen nonce
-  bao write -f sys/rotate/root/init secret_shares=5 secret_threshold=3
-
-  # 2. Jeder Key-Holder reicht seine bestehende Unseal-Share ein (3x, bis Threshold erreicht)
-  bao write sys/rotate/root/update key=<unseal-key-share> nonce=<nonce-aus-init>
-
-  Nach der dritten Share ist complete: true und du bekommst die neuen Shares (keys_base64).
-
-  Falls bao write bei dir aus irgendeinem Grund zickt, geht es identisch per curl (Token nicht vergessen — anders als beim alten unauthed-Pfad ist er jetzt Pflicht):
-
-  curl -s --request POST \
-    --header "X-Vault-Token: $BAO_TOKEN" \
-    --data '{"secret_shares":5,"secret_threshold":3}' \
-    https://openbao.intern.devopsdns.com/v1/sys/rotate/root/init
-
-  Status / Abbruch analog über GET bzw. DELETE auf sys/rotate/root/init.
 ```
+
+#### Empfohlener Weg: authentifiziertes Rotate
+
+Du brauchst einen Token mit `sudo` auf `sys/rotate/root` (ein Root-Token reicht). Dann statt `bao operator rekey`:
+
+```bash
+# 1. Rotation initialisieren -> liefert einen nonce
+bao write -f sys/rotate/root/init secret_shares=5 secret_threshold=3
+
+# 2. Jeder Key-Holder reicht seine bestehende Unseal-Share ein (3x, bis Threshold erreicht)
+bao write sys/rotate/root/update key=<unseal-key-share> nonce=<nonce-aus-init>
+```
+
+Nach der dritten Share ist `complete: true` und du bekommst die neuen Shares (`keys_base64`).
+
+Falls `bao write` bei dir aus irgendeinem Grund zickt, geht es identisch per curl (Token nicht vergessen — anders als beim alten unauthed-Pfad ist er jetzt Pflicht):
+
+```bash
+curl -s --request POST \
+  --header "X-Vault-Token: $BAO_TOKEN" \
+  --data '{"secret_shares":5,"secret_threshold":3}' \
+  https://openbao.intern.devopsdns.com/v1/sys/rotate/root/init
+```
+
+Status / Abbruch analog über GET bzw. DELETE auf `sys/rotate/root/init`.
 
 > **Auto-Unseal (HSM/Transit):** Dort gibt es keine Shamir-Unseal-Keys, sondern **Recovery Keys** (siehe `4-auto-unseal.md`). Die werden mit `bao operator rekey -target=recovery -init ...` neu ausgegeben — analoger Ablauf, anderes Ziel.
 
