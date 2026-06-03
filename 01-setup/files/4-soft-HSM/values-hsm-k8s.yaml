@@ -1,5 +1,6 @@
 server:
   image:
+    registry: docker.io
     repository: bao-hsm-softhsm     # das per k3d image import geladene Custom-Image
     tag: dev
     pullPolicy: IfNotPresent        # lokal vorhandenes Image nutzen, nicht aus Registry ziehen
