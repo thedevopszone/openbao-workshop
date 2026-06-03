@@ -149,20 +149,29 @@ Das offizielle `openbao/openbao-hsm-ubi` bringt das **cgo/pkcs11-Binary**, aber 
 `files/4-soft-HSM/Dockerfile`:
 
 ```dockerfile
-FROM openbao/openbao-hsm-ubi:2.5.4
+# Das offizielle openbao/openbao-hsm bringt das cgo/pkcs11-Binary, aber NICHT
+# die SoftHSM-Library. Wir legen ein schlankes Image darüber.
+#
+# Basis ist bewusst die Alpine-Variante openbao/openbao-hsm (NICHT die UBI-Variante):
+# UBI 10 hat kein 'softhsm' in den Repos und auch EPEL 10 paketiert SoftHSM
+# (Stand 2026-06) nicht. Alpine liefert 'softhsm' direkt aus dem Hauptrepo,
+# die PKCS#11-Library landet unter /usr/lib/softhsm/libsofthsm2.so.
+FROM openbao/openbao-hsm:2.5.4
 USER root
 
-# SoftHSMv2-Library (PKCS#11) aus EPEL nachinstallieren
-RUN microdnf install -y epel-release \
- && microdnf install -y softhsm \
- && microdnf clean all \
- # zeigt den exakten Library-Pfad – DIESEN Wert brauchst du gleich in der seal-Stanza:
+# SoftHSMv2-Library (PKCS#11) nachinstallieren.
+RUN apk add --no-cache softhsm \
+ # zeigt den exakten Library-Pfad – DIESEN Wert brauchst du in der seal-Stanza:
  && find / -name 'libsofthsm2.so*' 2>/dev/null
 
-# Pod-Sicht auf den Token-Store: hier liegt er unter /softhsm/tokens (siehe Teil 3/4)
-RUN mkdir -p /etc/softhsm \
+# Pod-Sicht auf den Token-Store: hier liegt er unter /softhsm/tokens.
+# SOFTHSM2_CONF explizit setzen, damit sowohl softhsm2-util als auch die im
+# OpenBao-Prozess geladene Library garantiert diese Konfig verwenden.
+ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+RUN mkdir -p /etc/softhsm /softhsm/tokens \
  && printf 'directories.tokendir = /softhsm/tokens\nobjectstore.backend = file\nlog.level = INFO\n' \
-      > /etc/softhsm/softhsm2.conf
+      > /etc/softhsm/softhsm2.conf \
+ && chown -R openbao:openbao /softhsm
 
 USER openbao
 ```
