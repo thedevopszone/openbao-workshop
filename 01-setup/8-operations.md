@@ -142,7 +142,78 @@ Status / Abbruch analog über GET bzw. DELETE auf `sys/rotate/root/init`.
 
 ---
 
-## Teil 3 — Monitoring & Health
+## Teil 3 — Root-Token weg: `generate-root`
+
+Den Root-Token nach dem Setup zu widerrufen (`bao token revoke -self`) ist **Best Practice** (siehe Checkliste unten). Aber was, wenn man ihn später wieder braucht — etwa weil keine andere Auth-Methode mehr `sudo`-Rechte hat? Dafür gibt es `bao operator generate-root`: Ein **Quorum der Unseal-Key-Holder** (bei uns 3 von 5) autorisiert gemeinsam die Erzeugung eines neuen Root-Tokens.
+
+### Stolperfalle: ab OpenBao 2.5.3 deaktiviert
+
+Seit **OpenBao 2.5.3** sind die unauthentifizierten `sys/generate-root/*`-Endpoints **standardmäßig abgeschaltet** (deprecated). Der Aufruf scheitert dann mit:
+
+```
+Code: 405. Errors:
+* unsupported operation
+```
+
+Der empfohlene Ersatz ist `bao token create` mit einem existierenden `sudo`-Token — der hilft aber genau dann nicht, wenn gar kein Token mehr da ist. Für diesen Notfall lässt sich der alte Weg per Listener-Parameter **temporär** reaktivieren. In `files/3-kubernetes/values-ingress.yml`:
+
+```hcl
+listener "tcp" {
+  tls_disable     = 1
+  address         = "[::]:8200"
+  cluster_address = "[::]:8201"
+  # TEMPORÄR: generate-root reaktivieren (seit OpenBao 2.5.3 default deaktiviert)
+  # Nach der Root-Token-Generierung wieder entfernen!
+  disable_unauthed_generate_root_endpoints = false
+}
+```
+
+Listener-Parameter werden **nicht** per SIGHUP nachgeladen — es braucht ein `helm upgrade` plus Pod-Neustart, und nach dem Neustart heißt es bei Shamir: **jeden Pod neu unsealen**.
+
+```bash
+helm upgrade openbao openbao/openbao -n openbao --version 0.28.3 -f values-ingress.yml
+kubectl delete pod -n openbao openbao-0 openbao-1 openbao-2
+
+# je Pod 3x unsealen (openbao-1/-2 starten erst, wenn der Vorgänger ready ist)
+kubectl exec -n openbao openbao-0 -- bao operator unseal <key-share>
+```
+
+### Die eigentliche Prozedur
+
+```bash
+# 1. Vorgang starten -> merkt euch OTP und Nonce!
+bao operator generate-root -init
+
+# 2. Threshold-mal eine Unseal-Share einreichen (Progress 3/3 -> Encoded Token)
+bao operator generate-root   # Key 1
+bao operator generate-root   # Key 2
+bao operator generate-root   # Key 3
+
+# 3. Encoded Token mit dem OTP aus Schritt 1 entschlüsseln -> neuer Root-Token
+bao operator generate-root -decode=<encoded-token> -otp=<otp>
+
+bao login <neuer-root-token>
+```
+
+Status prüfen bzw. abbrechen geht jederzeit mit `-status` / `-cancel`. In einem echten Multi-Holder-Setup reicht jeder Key-Holder seine Share auf der eigenen Maschine mit `-nonce=<nonce>` ein.
+
+> **Auto-Unseal (HSM/Transit):** Statt Unseal-Keys werden die **Recovery Keys** eingereicht (siehe `4-auto-unseal.md`) — der Ablauf ist identisch.
+
+### Danach: aufräumen und vorsorgen
+
+1. **Parameter wieder entfernen** (`disable_unauthed_generate_root_endpoints`-Zeile löschen, `helm upgrade`, Neustart, Unseal) — der Endpoint ist unauthentifiziert erreichbar und soll nicht dauerhaft offen sein.
+2. **Break-Glass-Token anlegen**, damit der nächste Notfall ohne diese Prozedur auskommt:
+
+```bash
+bao token create -policy=root -no-default-policy -display-name=break-glass
+```
+
+Den Token **offline und getrennt von den Unseal-Keys** verwahren. Das ist der von OpenBao empfohlene Weg: neuer Root-Token aus bestehendem `sudo`-Token statt `generate-root`.
+
+---
+
+
+## Teil 4 — Monitoring & Health
 
 ### Health-Endpoints (kein Token nötig)
 

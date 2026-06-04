@@ -1,4 +1,8 @@
 server:
+  image:                     # OpenBao-Version pinnen (reproduzierbares Setup)
+    registry: quay.io
+    repository: openbao/openbao
+    tag: "2.5.4"
   ha:
     enabled: true
     replicas: 3

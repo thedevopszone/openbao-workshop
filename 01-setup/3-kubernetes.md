@@ -434,20 +434,23 @@ kubectl get clusterissuer letsencrypt-prod -o wide   # Ready=True?
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
     hosts:
-      - host: openbao.intern.softxpert.de
+      - host: openbao.intern.devopsdns.com
         paths: []
     tls:
       - secretName: openbao-tls
         hosts:
-          - openbao.intern.softxpert.de
+          - openbao.intern.devopsdns.com
 ```
 
 ```bash
 helm upgrade openbao openbao/openbao -n openbao -f values-ingress.yml
 
 # cert-manager fordert das Zertifikat per DNS-01 an und legt openbao-tls an:
-kubectl get certificate -n openbao
+kubectl get certificate -n openbao     # Dauert etwas
 kubectl describe certificate openbao-tls -n openbao
+
+# Im Browser
+https://openbao.intern.devopsdns.com
 ```
 
 #### Bevor du startest — 3 Dinge anpassen
@@ -753,8 +756,11 @@ resource "vault_kv_secret_v2" "demo" {
 
 ```bash
 
-#export VAULT_ADDR=http://127.0.0.1:8200
+
 export VAULT_ADDR=http://127.0.0.1:8200
+# oder
+export VAULT_ADDR='https://openbao.intern.devopsdns.com'
+
 export VAULT_TOKEN=<your-root/dev-token>
 
 unset VAULT_CACERT
@@ -793,6 +799,9 @@ bao auth list
 
 ```
 http://openbao.172.16.0.13.nip.io/
+
+# oder
+https://openbao.intern.devopsdns.com/
 ```
 
 - **Als Admin:** Methode **Token**, den Initial Root Token eintragen.
@@ -804,13 +813,13 @@ http://openbao.172.16.0.13.nip.io/
 
 ```bash
 export VAULT_ADDR="http://127.0.0.1:8200"
+# oder
+export VAULT_ADDR=https://openbao.intern.devopsdns.com
 
 # als Workshop-User einloggen
 bao login -method=userpass username=workshop
 # Passwort: workshop123
 
-# Ausloggen
-bao token revoke -self
 
 export VAULT_ADDR=http://127.0.0.1:8200
 export VAULT_TOKEN=$(bao login -method=userpass -token-only username=workshop password=workshop123)
@@ -838,6 +847,7 @@ Ablauf, um trotzdem einen neuen Root-Token zu erzeugen:
 4. Config zurücksetzen und erneut durchrollen → Endpoint ist wieder gesperrt (405 bestätigt).
 
 > **Hinweise:**
+>
 > - Die ConfigMap-Änderung ist ein direkter `kubectl`-Patch, kein Helm-Update — der nächste `helm upgrade` überschreibt sie ohnehin mit dem sicheren Default (kein Drift in die unsichere Richtung).
 > - Empfehlung: aus dem neuen Root-Token einen kurzlebigen oder minimal berechtigten Token ableiten und den Root-Token danach wieder `revoke`n.
 >
