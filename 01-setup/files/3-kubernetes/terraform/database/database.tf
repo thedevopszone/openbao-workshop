@@ -6,7 +6,20 @@
 # OpenBao verbindet sich mit einem Connection-User (hier: postgres-Superuser)
 # und führt periodisch  ALTER USER ... WITH PASSWORD  aus.
 #
-# Liegt neben main.tf im selben Projekt → wird vom selben `tofu apply` erfasst.
+# Eigenes Projektverzeichnis (terraform/database/) mit eigenem State →
+# separat mit `tofu init` + `tofu apply` ausrollen.
+
+terraform {
+  required_providers {
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 4.0"
+    }
+  }
+}
+
+# Adresse & Token kommen aus VAULT_ADDR / VAULT_TOKEN (wie in Teil 5)
+provider "vault" {}
 
 # Wo Postgres aus Sicht der OpenBao-Pods erreichbar ist.
 # k3d spiegelt den Docker-Host unter host.k3d.internal in den Cluster

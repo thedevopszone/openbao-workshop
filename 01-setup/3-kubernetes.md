@@ -947,7 +947,7 @@ Postgres läuft per Docker Compose auf dem **Host** (Port 5432). Die OpenBao-Pod
 
 #### Schritt 3 — Engine, Connection & Static Role per OpenTofu anlegen
 
-Die Datei `terraform/database.tf` liegt **neben `main.tf`** im selben Projekt und wird vom selben `tofu apply` mit erfasst. Kern der Datei:
+Die Datei `terraform/database/database.tf` liegt in einem **eigenen Projektverzeichnis** (getrennt vom KV-/userpass-Projekt aus Teil 5) und wird mit einem **eigenen** `tofu init`/`tofu apply` ausgerollt — so lassen sich beide Setups unabhängig voneinander anwenden und zerstören. Kern der Datei:
 
 ```hcl
 # 1) Database-Secrets-Engine unter "database/"
@@ -989,6 +989,8 @@ export VAULT_TOKEN=<root>
 
 kubectl port-forward -n openbao svc/openbao-active 8200:8200
 
+cd terraform/database     # eigenes Projekt, eigener State
+tofu init
 tofu plan
 tofu apply
 
