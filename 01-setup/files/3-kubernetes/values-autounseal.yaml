@@ -3,6 +3,11 @@ server:
     registry: quay.io
     repository: openbao/openbao
     tag: "2.5.4"
+  dataStorage:               # Raft-Daten je Pod auf eigenem PVC (Longhorn)
+    enabled: true
+    size: 10Gi
+    storageClass: longhorn
+    accessMode: ReadWriteOnce
   ha:
     enabled: true
     replicas: 3
